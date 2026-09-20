@@ -1,0 +1,1238 @@
+<title>gpumd_toolkit</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&family=Noto+Sans+JP:wght@400;500;700&display=swap">
+
+<style>
+/* ============================================================
+   トークン — 配色は本ツールキットが実際に描く matplotlib の
+   系列色 (temperature=red / energy=blue / pressure=green /
+   volume=purple) から取っている。
+   ============================================================ */
+:root {
+  --bg:          #E9EDF1;
+  --surface:     #FFFFFF;
+  --surface-2:   #F2F5F8;
+  --ink:         #12171C;
+  --ink-2:       #46525D;
+  --ink-3:       #798592;
+  --rule:        #CDD7DF;
+  --rule-soft:   #E1E7EC;
+
+  --t-temp:      #B7392E;
+  --t-energy:    #26648F;
+  --t-press:     #35744A;
+  --t-vol:       #6A4E93;
+
+  --temp-wash:   #F7E9E7;
+  --energy-wash: #E7EFF6;
+  --press-wash:  #E6F0E9;
+
+  --accent:      var(--t-temp);
+  --focus:       #26648F;
+
+  /* コードパネルは両テーマ共通 — 端末の見え方を固定する */
+  --code-bg:     #161B21;
+  --code-panel:  #1D242B;
+  --code-fg:     #D6DEE6;
+  --code-dim:    #6E8090;
+  --code-str:    #A9C98C;
+  --code-kw:     #E58468;
+  --code-num:    #E3B872;
+  --code-fn:     #7FB4D8;
+  --code-rule:   #2B343D;
+
+  --sans: "IBM Plex Sans", "Noto Sans JP", "Hiragino Sans", "Yu Gothic", Meiryo, system-ui, sans-serif;
+  --mono: "IBM Plex Mono", "Noto Sans JP", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --rail: 252px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg:        #101519;
+    --surface:   #171E24;
+    --surface-2: #1C242B;
+    --ink:       #E4EAEF;
+    --ink-2:     #A2AFBA;
+    --ink-3:     #76838F;
+    --rule:      #2B343D;
+    --rule-soft: #212930;
+
+    --t-temp:    #E07A6A;
+    --t-energy:  #66A4D2;
+    --t-press:   #6FAE84;
+    --t-vol:     #A58AD0;
+
+    --temp-wash:   #2A1E1C;
+    --energy-wash: #17242E;
+    --press-wash:  #17261C;
+
+    --focus:     #66A4D2;
+  }
+}
+
+:root[data-theme="dark"] {
+  --bg:        #101519;
+  --surface:   #171E24;
+  --surface-2: #1C242B;
+  --ink:       #E4EAEF;
+  --ink-2:     #A2AFBA;
+  --ink-3:     #76838F;
+  --rule:      #2B343D;
+  --rule-soft: #212930;
+
+  --t-temp:    #E07A6A;
+  --t-energy:  #66A4D2;
+  --t-press:   #6FAE84;
+  --t-vol:     #A58AD0;
+
+  --temp-wash:   #2A1E1C;
+  --energy-wash: #17242E;
+  --press-wash:  #17261C;
+
+  --focus:     #66A4D2;
+}
+
+/* ============================================================ base */
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 15px;
+  line-height: 1.75;
+  -webkit-font-smoothing: antialiased;
+}
+
+a { color: var(--t-energy); text-decoration: none; border-bottom: 1px solid color-mix(in srgb, var(--t-energy) 35%, transparent); }
+a:hover { border-bottom-color: var(--t-energy); }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 2px; }
+
+code, kbd, samp { font-family: var(--mono); }
+
+/* ============================================================ shell */
+.shell {
+  display: grid;
+  grid-template-columns: var(--rail) minmax(0, 1fr);
+  gap: 0;
+  max-width: 1240px;
+  margin: 0 auto;
+  min-height: 100vh;
+}
+
+/* ---------------------------------------------------------- 索引 */
+.rail {
+  border-right: 1px solid var(--rule);
+  padding: 34px 26px 60px 28px;
+  position: sticky;
+  top: 0;
+  align-self: start;
+  max-height: 100vh;
+  overflow-y: auto;
+}
+
+.rail-mark {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--ink);
+  display: block;
+  margin-bottom: 4px;
+}
+.rail-sub {
+  font-size: 11.5px;
+  color: var(--ink-3);
+  letter-spacing: 0.04em;
+  margin-bottom: 26px;
+  display: block;
+}
+
+.rail-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 1px; }
+
+.rail-link {
+  display: grid;
+  grid-template-columns: 22px 1fr;
+  gap: 8px;
+  align-items: baseline;
+  padding: 5px 8px 5px 6px;
+  border: 0;
+  border-left: 2px solid transparent;
+  border-radius: 0 3px 3px 0;
+  color: var(--ink-2);
+  font-size: 13.5px;
+  line-height: 1.45;
+}
+.rail-link:hover { background: var(--surface-2); color: var(--ink); border-bottom: 0; }
+.rail-link .n {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-3);
+}
+.rail-link.on { border-left-color: var(--accent); color: var(--ink); background: var(--surface-2); font-weight: 500; }
+.rail-link.on .n { color: var(--accent); }
+
+.rail-foot {
+  margin-top: 26px;
+  padding-top: 16px;
+  border-top: 1px solid var(--rule-soft);
+  font-size: 11.5px;
+  color: var(--ink-3);
+  font-family: var(--mono);
+  line-height: 1.7;
+}
+
+/* ---------------------------------------------------------- 本文 */
+.main { padding: 34px 40px 120px; min-width: 0; }
+.wrap { max-width: 840px; }
+.prose { max-width: 66ch; }
+
+/* masthead */
+.masthead { margin-bottom: 30px; }
+.eyebrow {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  margin: 0 0 12px;
+}
+h1 {
+  font-size: 40px;
+  line-height: 1.12;
+  font-weight: 600;
+  letter-spacing: -0.022em;
+  margin: 0 0 14px;
+  text-wrap: balance;
+}
+h1 .mono { font-family: var(--mono); font-weight: 600; letter-spacing: -0.03em; }
+.lede { font-size: 16.5px; line-height: 1.7; color: var(--ink-2); margin: 0; max-width: 62ch; }
+.lede strong { color: var(--ink); font-weight: 600; }
+
+/* 検証済み環境ストリップ */
+.strip {
+  margin: 26px 0 0;
+  border-top: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+}
+.strip div {
+  padding: 13px 16px 14px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.strip dt {
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  font-family: var(--mono);
+}
+.strip dd {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+  line-height: 1.4;
+}
+.strip .ok { color: var(--t-press); }
+.strip .hot { color: var(--t-temp); }
+
+/* sections */
+.sec { padding-top: 46px; scroll-margin-top: 18px; }
+.sec + .sec { border-top: 1px solid var(--rule-soft); }
+
+h2 {
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: -0.014em;
+  line-height: 1.3;
+  margin: 0 0 6px;
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  text-wrap: balance;
+}
+h2 .n {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+  flex: none;
+}
+h2 .cls { font-family: var(--mono); font-size: 18px; color: var(--ink-2); font-weight: 500; letter-spacing: -0.02em; }
+
+h3 {
+  font-size: 15.5px;
+  font-weight: 600;
+  margin: 34px 0 10px;
+  color: var(--ink);
+  letter-spacing: -0.005em;
+}
+h3 .n { font-family: var(--mono); font-size: 12.5px; color: var(--ink-3); margin-right: 8px; font-weight: 500; }
+
+p { margin: 0 0 14px; }
+.sec p:last-child { margin-bottom: 0; }
+
+.sec ul, .sec ol { margin: 0 0 14px; padding-left: 20px; max-width: 66ch; }
+.sec li { margin-bottom: 7px; }
+.sec li::marker { color: var(--ink-3); }
+
+strong { font-weight: 600; }
+
+/* 本文中のコード片 */
+p code, li code, td code, .note code, h3 code, dd code {
+  font-size: 0.875em;
+  background: var(--surface-2);
+  border: 1px solid var(--rule-soft);
+  border-radius: 3px;
+  padding: 0.1em 0.36em;
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+/* ---------------------------------------------------------- コード */
+.block {
+  margin: 0 0 18px;
+  background: var(--code-bg);
+  border-radius: 5px;
+  overflow: hidden;
+  border: 1px solid var(--code-rule);
+}
+.block-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 10px 7px 14px;
+  background: var(--code-panel);
+  border-bottom: 1px solid var(--code-rule);
+}
+.block-tag {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--code-dim);
+}
+.copy {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--code-dim);
+  background: transparent;
+  border: 1px solid var(--code-rule);
+  border-radius: 3px;
+  padding: 3px 9px;
+  cursor: pointer;
+  transition: color 0.12s, border-color 0.12s;
+}
+.copy:hover { color: var(--code-fg); border-color: var(--code-dim); }
+.copy.done { color: var(--code-str); border-color: var(--code-str); }
+
+.block pre {
+  margin: 0;
+  padding: 14px 16px 16px;
+  overflow-x: auto;
+  font-size: 12.9px;
+  line-height: 1.65;
+  color: var(--code-fg);
+  -webkit-font-smoothing: auto;
+}
+.block code { font-family: var(--mono); background: none; border: 0; padding: 0; white-space: pre; color: inherit; }
+
+/* highlight.js のテーマ (CDN の CSS は CSP で読めないため自前で定義) */
+.hljs-comment, .hljs-quote { color: var(--code-dim); font-style: italic; }
+.hljs-string, .hljs-meta .hljs-string { color: var(--code-str); }
+.hljs-keyword, .hljs-built_in, .hljs-literal, .hljs-type { color: var(--code-kw); }
+.hljs-number, .hljs-symbol { color: var(--code-num); }
+.hljs-title, .hljs-title.function_, .hljs-section, .hljs-attr, .hljs-params { color: var(--code-fn); }
+.hljs-variable, .hljs-name { color: var(--code-fg); }
+.hljs-meta { color: var(--code-dim); }
+
+/* ---------------------------------------------------------- 表 */
+.table-scroll { overflow-x: auto; margin: 0 0 18px; }
+table {
+  border-collapse: collapse;
+  width: 100%;
+  min-width: 520px;
+  font-size: 13.5px;
+}
+th {
+  text-align: left;
+  font-weight: 600;
+  font-size: 11px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  font-family: var(--mono);
+  padding: 0 14px 8px 0;
+  border-bottom: 1px solid var(--rule);
+  white-space: nowrap;
+}
+td {
+  padding: 11px 14px 11px 0;
+  border-bottom: 1px solid var(--rule-soft);
+  vertical-align: top;
+  line-height: 1.6;
+}
+tr:last-child td { border-bottom: 0; }
+td code { white-space: normal; }
+td:first-child { white-space: nowrap; }
+
+/* ---------------------------------------------------------- 注記 */
+.note {
+  border-left: 2px solid var(--ink-3);
+  background: var(--surface);
+  padding: 15px 18px 16px;
+  margin: 0 0 18px;
+  border-radius: 0 4px 4px 0;
+  font-size: 14px;
+  max-width: 72ch;
+}
+.note > :last-child { margin-bottom: 0; }
+.note-tag {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  display: block;
+  margin-bottom: 7px;
+  font-weight: 600;
+}
+.note.warn { border-left-color: var(--t-temp); background: var(--temp-wash); }
+.note.warn .note-tag { color: var(--t-temp); }
+.note.fix { border-left-color: var(--t-press); background: var(--press-wash); }
+.note.fix .note-tag { color: var(--t-press); }
+.note.info { border-left-color: var(--t-energy); background: var(--energy-wash); }
+.note.info .note-tag { color: var(--t-energy); }
+.note ol, .note ul { margin: 8px 0 0; padding-left: 20px; }
+
+/* ---------------------------------------------------------- 図 */
+.figure { margin: 0 0 20px; }
+.figure svg { display: block; width: 100%; height: auto; max-width: 660px; }
+.figcap {
+  font-size: 12px;
+  color: var(--ink-3);
+  font-family: var(--mono);
+  margin-top: 4px;
+  line-height: 1.6;
+}
+
+/* 構成ツリー */
+.tree {
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 5px;
+  padding: 16px 18px;
+  overflow-x: auto;
+  margin: 0 0 18px;
+  font-family: var(--mono);
+  font-size: 12.6px;
+  line-height: 1.85;
+  color: var(--ink-2);
+  white-space: pre;
+}
+.tree b { color: var(--ink); font-weight: 600; }
+.tree .star { color: var(--accent); font-weight: 600; }
+.tree .dim { color: var(--ink-3); }
+
+@media (max-width: 900px) {
+  .shell { grid-template-columns: minmax(0, 1fr); }
+  .rail {
+    position: static;
+    max-height: none;
+    border-right: 0;
+    border-bottom: 1px solid var(--rule);
+    padding: 20px 20px 16px;
+  }
+  .rail-list { flex-direction: row; flex-wrap: wrap; gap: 4px 6px; }
+  .rail-link { border-left: 0; border-bottom: 2px solid transparent; border-radius: 3px; padding: 4px 9px; }
+  .rail-link.on { border-left: 0; border-bottom-color: var(--accent); }
+  .rail-foot { display: none; }
+  .main { padding: 24px 20px 90px; }
+  h1 { font-size: 30px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; }
+}
+</style>
+
+<div class="shell">
+
+  <nav class="rail" aria-label="目次">
+    <span class="rail-mark">gpumd_toolkit</span>
+    <span class="rail-sub">v0.1.0 · Python 3.12</span>
+    <ul class="rail-list">
+      <li><a class="rail-link" href="#overview"><span class="n">00</span><span>概要と構成</span></a></li>
+      <li><a class="rail-link" href="#setup"><span class="n">01</span><span>セットアップ</span></a></li>
+      <li><a class="rail-link" href="#md"><span class="n">02</span><span>MD 計算</span></a></li>
+      <li><a class="rail-link" href="#analysis"><span class="n">03</span><span>解析・可視化</span></a></li>
+      <li><a class="rail-link" href="#traj"><span class="n">04</span><span>トラジェクトリ変換</span></a></li>
+      <li><a class="rail-link" href="#parallel"><span class="n">05</span><span>並列実行</span></a></li>
+      <li><a class="rail-link" href="#ase"><span class="n">06</span><span>ASE ベースの実行</span></a></li>
+      <li><a class="rail-link" href="#dpmd"><span class="n">07</span><span>DPMD example と予実</span></a></li>
+      <li><a class="rail-link" href="#cli"><span class="n">08</span><span>CLI スクリプト</span></a></li>
+      <li><a class="rail-link" href="#tests"><span class="n">09</span><span>テスト</span></a></li>
+      <li><a class="rail-link" href="#design"><span class="n">10</span><span>設計メモ</span></a></li>
+    </ul>
+    <div class="rail-foot">
+      GPUMD 35b47fe<br>
+      NEP89 (89 元素)<br>
+      RTX 5070 Ti
+    </div>
+  </nav>
+
+  <main class="main">
+  <div class="wrap">
+
+    <!-- ============================================ masthead -->
+    <header class="masthead">
+      <p class="eyebrow">Reference manual</p>
+      <h1><span class="mono">gpumd_toolkit</span><br>GPUMD を Python から使いこなす</h1>
+      <p class="lede">
+        構造の準備 → <code>run.in</code> の生成 → <code>gpumd</code> の実行 → 解析・可視化 →
+        トラジェクトリ変換までを一貫して扱うクラス群。クラスは
+        <strong>MD 計算</strong> / <strong>DPMD の example</strong> /
+        <strong>ASE ベースの実行</strong> の 3 系統に分けてある。
+      </p>
+
+      <dl class="strip">
+        <div><dt>gpumd</dt><dd class="ok">解決済み</dd></div>
+        <div><dt>GPU</dt><dd>RTX 5070 Ti</dd></div>
+        <div><dt>backends</dt><dd class="ok">cpu · gpu · pynep</dd></div>
+        <div><dt>原子数上限</dt><dd>10,000</dd></div>
+        <div><dt>tests</dt><dd class="ok">27 passed</dd></div>
+      </dl>
+    </header>
+
+    <!-- ============================================ 00 -->
+    <section class="sec" id="overview">
+      <h2><span class="n">00</span>概要と構成</h2>
+      <p class="prose">
+        <a href="https://gpumd.org">GPUMD</a> は GPU 上で動く分子動力学エンジンで、入力は
+        <code>model.xyz</code> と <code>run.in</code> の 2 ファイル、出力は
+        <code>thermo.out</code> や <code>dump.xyz</code> などのテキストファイルという構成をとる。
+        本ツールキットはこの入出力を Python 側から組み立て・読み取り、
+        <code>subprocess</code> で <code>gpumd</code> を起動する。
+      </p>
+
+      <div class="tree">03_gpumd_python_script/
+├── <b>gpumd_toolkit/</b>
+│   ├── config.py         <b>GPUMDEnvironment</b>    <span class="dim">仮想環境・実行ファイル・GPU の設定</span>
+│   ├── structure.py      <b>StructureHandler</b>    <span class="dim">POSCAR / CIF などの入出力と model.xyz 生成</span>
+│   ├── profiles.py       <b>TemperatureProfile</b>  <span class="dim">昇温・降温・定温・任意温度プロファイル</span>
+│   ├── inputs.py         <b>RunInputBuilder</b>     <span class="dim">MDStage / DumpSettings — run.in の組み立て</span>
+│   ├── md.py             <b>GPUMDCalculation</b>    <span class="star">★ MD 計算のメインクラス</span>
+│   ├── trajectory.py     <b>TrajectoryConverter</b> <span class="dim">XDATCAR / traj などへの変換</span>
+│   ├── analysis.py       <b>MDAnalyzer</b>          <span class="dim">thermo.out 解析と matplotlib 出力</span>
+│   ├── parallel.py       <b>ParallelRunner</b>      <span class="dim">joblib による並列実行</span>
+│   ├── ase_interface.py  <b>ASEMDRunner</b>         <span class="star">★ ASE ベースの実行 (CPU/GPU/pyNEP)</span>
+│   ├── validation.py     <b>ValidationReport</b>    <span class="dim">予実 (期待値 vs 実測値) 管理</span>
+│   ├── diagnostics.py    <b>environment_report</b>  <span class="dim">実行環境の確認</span>
+│   └── examples/dpmd.py  <b>DPMDExample</b>         <span class="star">★ DPMD の example + 予実</span>
+├── <b>scripts/</b>              <span class="dim">コマンドラインから使うスクリプト</span>
+├── <b>tests/</b>                <span class="dim">自己テスト (pytest, 27 件)</span>
+└── <b>results/</b>              <span class="dim">同梱の実行済み結果 (DPMD example の予実)</span></div>
+    </section>
+
+    <!-- ============================================ 01 -->
+    <section class="sec" id="setup">
+      <h2><span class="n">01</span>セットアップ</h2>
+
+      <div class="block">
+        <div class="block-bar"><span class="block-tag">bash</span><button class="copy" type="button">copy</button></div>
+<pre><code class="language-bash">source /home/tajimamainpc/.venv/gpumd312/bin/activate
+uv pip install -r requirements.txt
+
+# GitHub からのみ入るもの (任意)
+uv pip install setuptools wheel
+uv pip install --no-build-isolation "gpyumd @ git+https://github.com/AlexGabourie/gpyumd.git"
+uv pip install "pynep @ git+https://github.com/bigd4/PyNEP.git"</code></pre>
+      </div>
+
+      <p class="prose">
+        <code>gpumd</code> / <code>nep</code> コマンドはログインシェルの <code>PATH</code>
+        (ここでは <code>/home/tajimamainpc/repos/GPUMD/src</code>) から解決される。
+        本ツールキットは <code>subprocess</code> で実行するとき
+        <strong>必ず仮想環境を <code>source</code> したログインシェル</strong>
+        を使う。
+      </p>
+
+      <div class="block">
+        <div class="block-bar"><span class="block-tag">実行のかたち</span><button class="copy" type="button">copy</button></div>
+<pre><code class="language-bash">bash -lc "source /home/tajimamainpc/.venv/gpumd312/bin/activate &amp;&amp; gpumd"</code></pre>
+      </div>
+
+      <h3>確認</h3>
+
+      <div class="block">
+        <div class="block-bar"><span class="block-tag">bash</span><button class="copy" type="button">copy</button></div>
+<pre><code class="language-bash">python scripts/check_environment.py</code></pre>
+      </div>
+
+      <div class="block">
+        <div class="block-bar"><span class="block-tag">出力</span><button class="copy" type="button">copy</button></div>
+<pre><code>  OK gpumd       : /home/tajimamainpc/repos/GPUMD/src/gpumd
+  OK nep         : /home/tajimamainpc/repos/GPUMD/src/nep
+  GPU            : [0]  NVIDIA GeForce RTX 5070 Ti, 16303 MiB
+  OK calorine 3.5 / OK pynep 0.0.1 / OK gpyumd
+  ASE backends   : cpu OK / gpu OK / pynep OK</code></pre>
+      </div>
+
+      <div class="note warn">
+        <span class="note-tag">gpyumd について</span>
+        <p>
+          mission で挙げられている 3 つ (calorine / gpyumd / pyNEP) のうち gpyumd (v0.1) は
+          ローダが <code>pandas.read_csv(delim_whitespace=…)</code> に依存しており、
+          pandas 2.2 以降で削除されたため <strong>この環境では動作しない</strong>。
+        </p>
+        <p>
+          したがって入出力は calorine を主に使い、CPU 実行の代替として pyNEP を使う構成にしている。
+          gpyumd 自体はインストール済みなので、pandas を下げれば利用できる。
+        </p>
+      </div>
+    </section>
+
+    <!-- ============================================ 02 -->
+    <section class="sec" id="md">
+      <h2><span class="n">02</span>MD 計算 —<span class="cls">GPUMDCalculation</span></h2>
+
+      <h3><span class="n">2.1</span>基本</h3>
+
+      <div class="block">
+        <div class="block-bar"><span class="block-tag">python</span><button class="copy" type="button">copy</button></div>
+<pre><code class="language-python">from gpumd_toolkit import GPUMDCalculation
+
+calc = GPUMDCalculation(
+    "POSCAR",                       # POSCAR / CIF / xyz / traj / lammps-data ...
+    potential="nep89.txt",
+    workdir="runs/si_300K",
+    time_step=1.0,                  # fs
+    min_cell_length=12.0,           # この長さ以上になるよう自動でスーパーセル化
+    max_atoms=10_000,               # mission の上限 (超えると例外)
+)
+calc.set_dump(thermo=100, traj=500) # 任意ステップごとにトラジェクトリ保存
+calc.minimize()                     # 任意: MD 前に FIRE で構造最適化
+calc.nvt(temperature=300, steps=20_000)
+
+result = calc.run()                 # gpumd を実行
+print(result.summary())             # ステージごとの平均・標準偏差
+result.plot()                       # runs/si_300K/analysis/*.png
+result.to_xdatcar()                 # runs/si_300K/XDATCAR</code></pre>
+      </div>
+
+      <h3><span class="n">2.2</span>アンサンブル</h3>
+
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr><th>メソッド</th><th>GPUMD キーワード</th><th>備考</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>calc.nve(steps=…)</code></td>
+              <td><code>ensemble nve</code></td>
+              <td>エネルギー保存の確認に</td>
+            </tr>
+            <tr>
+              <td><code>calc.nvt(temperature=…, steps=…, thermostat=…)</code></td>
+              <td><code>nvt_ber</code> / <code>nvt_nhc</code> (既定) / <code>nvt_bdp</code> / <code>nvt_lan</code> / <code>nvt_bao</code> / <code>nvt_mttk</code></td>
+              <td><code>temperature_end=</code> で昇温 / 降温</td>
+            </tr>
+            <tr>
+              <td><code>calc.npt(temperature=…, pressure=…, steps=…, barostat=…)</code></td>
+              <td><code>npt_ber</code> / <code>npt_scr</code> (既定) / <code>npt_mttk</code></td>
+              <td>圧力はスカラー / 3 成分 / 6 成分</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="block">
+        <div class="block-bar"><span class="block-tag">python</span><button class="copy" type="button">copy</button></div>
+<pre><code class="language-python"># 段階的に積み上げる (すべて 1 つの run.in にステージとして並ぶ)
+calc.nvt(temperature=300, steps=10_000)                       # 定温
+calc.nvt(temperature=300, temperature_end=1200, steps=40_000) # 昇温
+calc.npt(temperature=1200, pressure=0.0, steps=20_000)        # NPT
+calc.nve(steps=10_000)                                        # NVE</code></pre>
+      </div>
+
+      <p class="prose">
+        <code>npt_ber</code> / <code>npt_scr</code> は直交セルが前提なので、三斜晶なら
+        <code>GPUMDCalculation(..., orthorhombic=True)</code> で変換するか
+        <code>npt_mttk</code> を使う。
+      </p>
+
+      <h3><span class="n">2.3</span>任意の温度プロファイル</h3>
+
+      <figure class="figure">
+        <svg viewBox="0 0 660 236" role="img" aria-label="アニールの温度プロファイル: 300 K で 10 ps 平衡化、30 ps までに 1200 K へ昇温、50 ps まで保持、90 ps で 300 K へ降温">
+          <!-- 目盛線 -->
+          <g stroke="var(--rule)" stroke-width="1">
+            <line x1="56" y1="40" x2="628" y2="40"></line>
+            <line x1="56" y1="168" x2="628" y2="168"></line>
+          </g>
+          <g stroke="var(--rule)" stroke-width="1" stroke-dasharray="2 4">
+            <line x1="118" y1="34" x2="118" y2="168"></line>
+            <line x1="243" y1="34" x2="243" y2="168"></line>
+            <line x1="367" y1="34" x2="367" y2="168"></line>
+          </g>
+
+          <!-- 温度プロファイル -->
+          <polyline points="56,168 118,168 243,40 367,40 616,168"
+                    fill="none" stroke="var(--t-temp)" stroke-width="2.25"
+                    stroke-linejoin="round" stroke-linecap="round"></polyline>
+          <g fill="var(--t-temp)">
+            <circle cx="56" cy="168" r="3"></circle>
+            <circle cx="118" cy="168" r="3"></circle>
+            <circle cx="243" cy="40" r="3"></circle>
+            <circle cx="367" cy="40" r="3"></circle>
+            <circle cx="616" cy="168" r="3"></circle>
+          </g>
+
+          <!-- 縦軸ラベル -->
+          <g fill="var(--ink-3)" font-family="IBM Plex Mono, monospace" font-size="11" text-anchor="end">
+            <text x="48" y="44">1200 K</text>
+            <text x="48" y="172">300 K</text>
+          </g>
+          <!-- 横軸ラベル -->
+          <g fill="var(--ink-3)" font-family="IBM Plex Mono, monospace" font-size="11" text-anchor="middle">
+            <text x="56" y="188">0</text>
+            <text x="118" y="188">10</text>
+            <text x="243" y="188">30</text>
+            <text x="367" y="188">50</text>
+            <text x="616" y="188">90 ps</text>
+          </g>
+          <!-- ステージ帯 -->
+          <g stroke="var(--ink-3)" stroke-width="1">
+            <line x1="56" y1="204" x2="118" y2="204"></line>
+            <line x1="118" y1="204" x2="243" y2="204"></line>
+            <line x1="243" y1="204" x2="367" y2="204"></line>
+            <line x1="367" y1="204" x2="616" y2="204"></line>
+            <g stroke-width="1">
+              <line x1="56" y1="200" x2="56" y2="208"></line>
+              <line x1="118" y1="200" x2="118" y2="208"></line>
+              <line x1="243" y1="200" x2="243" y2="208"></line>
+              <line x1="367" y1="200" x2="367" y2="208"></line>
+              <line x1="616" y1="200" x2="616" y2="208"></line>
+            </g>
+          </g>
+          <g fill="var(--ink-2)" font-family="IBM Plex Sans, sans-serif" font-size="11" text-anchor="middle">
+            <text x="87" y="224">平衡化</text>
+            <text x="180" y="224">昇温</text>
+            <text x="305" y="224">保持</text>
+            <text x="491" y="224">降温</text>
+          </g>
+        </svg>
+        <figcaption class="figcap">
+          TemperatureProfile.anneal(300, 1200, equilibrate_steps=10_000, heat_steps=20_000,
+          hold_steps=20_000, cool_steps=40_000) — time_step 1.0 fs で合計 90,000 step = 90 ps。
+          各区間が 1 つの run ブロックになる。
+        </figcaption>
+      </figure>
+
+      <div class="block">
+        <div class="block-bar"><span class="block-tag">python</span><button class="copy" type="button">copy</button></div>
+<pre><code class="language-python">from gpumd_toolkit import TemperatureProfile
+
+# (a) アニール: 平衡化 → 昇温 → 保持 → 降温
+profile = TemperatureProfile.anneal(
+    300, 1200, equilibrate_steps=10_000,
+    heat_steps=20_000, hold_steps=20_000, cool_steps=40_000)
+
+# (b) 折れ線で任意指定 (時刻 ps, 温度 K)
+profile = TemperatureProfile.from_points(
+    [(0, 300), (10, 1000), (20, 1000), (40, 300)], time_step_fs=1.0)
+
+print(profile.summary(time_step_fs=1.0))
+profile.plot(1.0, filename="profile.png")
+
+calc.apply_profile(profile, ensemble="nvt_nhc")   # 各区間が 1 ステージになる</code></pre>
+      </div>
+
+      <p class="prose">
+        GPUMD の <code>ensemble nvt_xxx &lt;T1&gt; &lt;T2&gt; &lt;T_coup&gt;</code> は 1 つの
+        <code>run</code> の中で目標温度を <code>T1 → T2</code> へ線形変化させる。
+        任意プロファイルはこれを区分線形に並べて表現する。
+      </p>
+
+      <h3><span class="n">2.4</span>出力設定</h3>
+
+      <div class="block">
+        <div class="block-bar"><span class="block-tag">python</span><button class="copy" type="button">copy</button></div>
+<pre><code class="language-python">calc.set_dump(
+    thermo=100,                     # thermo.out の間隔
+    traj=1000,                      # トラジェクトリの間隔
+    traj_file="dump.xyz",
+    traj_properties=("velocity", "force", "potential", "unwrapped_position"),
+    restart=10_000,                 # restart.xyz
+    extra=("compute_msd 10 400", "compute_rdf 100 100 8.0"),
+)</code></pre>
+      </div>
+
+      <div class="note warn">
+        <span class="note-tag">削除されたキーワード</span>
+        <p>
+          この GPUMD では <code>dump_exyz</code> / <code>dump_position</code> /
+          <code>dump_force</code> は <strong>削除済み</strong>で、すべて
+          <code>dump_xyz &lt;interval&gt; &lt;file&gt; [properties]</code> に統合されている。
+          本ツールキットは新しい書式のみを出力する。
+        </p>
+      </div>
+
+      <h3><span class="n">2.5</span>実行前の確認</h3>
+
+      <div class="block">
+        <div class="block-bar"><span class="block-tag">python</span><button class="copy" type="button">copy</button></div>
+<pre><code class="language-python">print(calc.describe())   # ステージ一覧
+print(calc.preview())    # 生成される run.in
+calc.run(dry_run=True)   # model.xyz と run.in だけ書き出す</code></pre>
+      </div>
+    </section>
+
+    <!-- ============================================ 03 -->
+    <section class="sec" id="analysis">
+      <h2><span class="n">03</span>解析・可視化 —<span class="cls">MDAnalyzer</span></h2>
+
+      <p class="prose">
+        <code>thermo.out</code> を <code>run.in</code> と突き合わせて
+        <strong>時間軸・ステージ番号・目標温度を復元</strong>する。
+      </p>
+
+      <div class="block">
+        <div class="block-bar"><span class="block-tag">python</span><button class="copy" type="button">copy</button></div>
+<pre><code class="language-python">from gpumd_toolkit import MDAnalyzer
+
+a = MDAnalyzer("runs/si_300K")
+a.thermo.frame            # DataFrame: time_ps, step, stage, temperature, pressure, volume, ...
+a.thermo.summary()        # ステージごとの平均/標準偏差 (先頭 30% は平衡化として除外)
+a.thermo.energy_drift()   # 全エネルギードリフト [meV/atom/ps] (NVE の品質指標)
+a.plot_all()              # overview/temperature/energy/pressure/cell(+msd/sdc/rdf).png と CSV
+a.diffusion_coefficient(source="msd")   # msd.out から自己拡散係数</code></pre>
+      </div>
+
+      <p class="prose">複数計算の重ね描き:</p>
+
+      <div class="block">
+        <div class="block-bar"><span class="block-tag">python</span><button class="copy" type="button">copy</button></div>
+<pre><code class="language-python">from gpumd_toolkit.analysis import compare_runs
+compare_runs(["runs/T300K", "runs/T600K"], quantity="temperature", filename="cmp.png")</code></pre>
+      </div>
+    </section>
+
+    <!-- ============================================ 04 -->
+    <section class="sec" id="traj">
+      <h2><span class="n">04</span>トラジェクトリ変換 —<span class="cls">TrajectoryConverter</span></h2>
+
+      <div class="block">
+        <div class="block-bar"><span class="block-tag">python</span><button class="copy" type="button">copy</button></div>
+<pre><code class="language-python">from gpumd_toolkit import TrajectoryConverter
+
+t = TrajectoryConverter("runs/si_300K/dump.xyz")
+t.n_frames
+t.to_xdatcar("runs/si_300K/XDATCAR", stride=10)   # VASP XDATCAR
+t.to_ase_traj("runs/si_300K/md.traj")             # ASE .traj
+t.convert("out.lammpstrj", fmt="lammps-dump")     # 他形式
+t.msd(time_step_ps=0.5)                           # アンラップ座標から MSD / 拡散係数
+t.rdf(rmax=8.0, stride=10)                        # g(r)</code></pre>
+      </div>
+
+      <p class="prose">
+        対応形式: <code>xdatcar</code>, <code>traj</code>, <code>extxyz</code>,
+        <code>lammps-dump</code>, <code>pdb</code>, <code>cif</code>,
+        <code>netcdf</code>, <code>vasp</code>。
+      </p>
+    </section>
+
+    <!-- ============================================ 05 -->
+    <section class="sec" id="parallel">
+      <h2><span class="n">05</span>並列実行 —<span class="cls">ParallelRunner</span></h2>
+
+      <div class="block">
+        <div class="block-bar"><span class="block-tag">python</span><button class="copy" type="button">copy</button></div>
+<pre><code class="language-python">from functools import partial
+from gpumd_toolkit import GPUMDCalculation, JobSpec, ParallelRunner
+
+def build(temperature, workdir):        # トップレベル関数にすること (pickle 可能)
+    calc = GPUMDCalculation("POSCAR", "nep89.txt", workdir, min_cell_length=12.0)
+    calc.set_dump(thermo=100, traj=1000)
+    calc.nvt(temperature=temperature, steps=20_000)
+    return calc
+
+jobs = [JobSpec(partial(build, T, f"runs/T{T}K"), name=f"T{T}K")
+        for T in (300, 600, 900, 1200)]
+results = ParallelRunner(n_jobs=2).run(jobs)   # GPU が複数あれば自動で振り分け</code></pre>
+      </div>
+
+      <p class="prose">
+        <code>ParallelRunner(gpu_ids=[0, 1])</code> でジョブへ
+        <code>CUDA_VISIBLE_DEVICES</code> をラウンドロビン割当。
+      </p>
+    </section>
+
+    <!-- ============================================ 06 -->
+    <section class="sec" id="ase">
+      <h2><span class="n">06</span>ASE ベースの実行 —<span class="cls">ASEMDRunner</span></h2>
+
+      <p class="prose">3 つのバックエンドを同じ API で切り替えられる。</p>
+
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr><th>backend</th><th>実体</th><th>用途</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>cpu</code></td>
+              <td>calorine <code>CPUNEP</code> (GPUMD 同梱の <code>nep_cpu</code>)</td>
+              <td>CPU のみの環境、軽い 1 点計算</td>
+            </tr>
+            <tr>
+              <td><code>pynep</code></td>
+              <td>pyNEP (<code>NEP_CPU</code>)</td>
+              <td>同上。pyNEP を使いたい場合</td>
+            </tr>
+            <tr>
+              <td><code>gpu</code></td>
+              <td>calorine <code>GPUNEP</code> (<code>gpumd</code> 実行ファイル経由)</td>
+              <td>GPU がある環境</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="block">
+        <div class="block-bar"><span class="block-tag">python</span><button class="copy" type="button">copy</button></div>
+<pre><code class="language-python">from gpumd_toolkit import ASEMDRunner, create_nep_calculator, available_backends
+
+available_backends()      # {'cpu': True, 'pynep': True, 'gpu': True}
+
+runner = ASEMDRunner("POSCAR", model="nep89.txt", backend="cpu", workdir="runs/ase")
+runner.single_point()     # energy, forces, stress, per-atom energies
+runner.relax(fmax=0.01, relax_cell=True)
+runner.run_md(ensemble="nvt", temperature=300, temperature_end=600,
+              steps=5000, time_step=1.0)
+runner.plot(); runner.save_log()
+runner.write_trajectory("runs/ase/XDATCAR", fmt="xdatcar")</code></pre>
+      </div>
+
+      <p class="prose">calculator 単体で使う場合:</p>
+
+      <div class="block">
+        <div class="block-bar"><span class="block-tag">python</span><button class="copy" type="button">copy</button></div>
+<pre><code class="language-python">atoms.calc = create_nep_calculator("nep89.txt", backend="cpu", atoms=atoms)
+atoms.get_potential_energy()      # 全エネルギー
+atoms.get_potential_energies()    # per-atom エネルギー</code></pre>
+      </div>
+
+      <div class="note info">
+        <span class="note-tag">NEP_CPU / pyNEP への切り替え</span>
+        <p>
+          <code>backend="cpu"</code> ↔ <code>"pynep"</code> の 1 引数だけで済む。
+          GPU が無い環境でも <code>backend="cpu"</code> (calorine 同梱の
+          <code>nep_cpu</code>) で動く。
+        </p>
+      </div>
+
+      <div class="note fix">
+        <span class="note-tag">calorine 3.5 への補正</span>
+        <p>本モジュールでは calorine 3.5 の以下 2 点を補正している。</p>
+        <ol>
+          <li><code>CPUNEP</code> が per-atom エネルギーを <code>results</code> に入れていない
+            → <code>get_potential_energies()</code> が例外になる問題を修正。</li>
+          <li><code>GPUNEP</code> の 1 点計算が削除済みキーワード <code>dump_force</code> /
+            <code>dump_position</code> を使うため新しい GPUMD で失敗する →
+            <code>dump_xyz … force potential</code> に置換し、ついでに per-atom
+            エネルギーも取得。</li>
+        </ol>
+        <p>
+          3 バックエンドのエネルギー・力は相対誤差 1e-6 以内で一致することを
+          <code>tests/test_toolkit.py::test_backends_agree</code> で確認している。
+        </p>
+      </div>
+    </section>
+
+    <!-- ============================================ 07 -->
+    <section class="sec" id="dpmd">
+      <h2><span class="n">07</span>DPMD の example と予実 —<span class="cls">DPMDExample</span></h2>
+
+      <p class="prose">
+        題材は GPUMD 公式 example <code>14_DP/water_msd</code>
+        (液体水 512 H<sub>2</sub>O = 1536 原子、330 K NVT、<code>compute_sdc</code> /
+        <code>compute_msd</code> で自己拡散係数)。
+        <a href="https://gpyumd.readthedocs.io/en/latest/example.html">gpyumd のドキュメント例</a>
+        と同じ「平衡化 → 本計算 → 輸送係数」の流れになっている。
+      </p>
+
+      <div class="block">
+        <div class="block-bar"><span class="block-tag">python</span><button class="copy" type="button">copy</button></div>
+<pre><code class="language-python">from gpumd_toolkit.examples import DPMDExample
+
+example = DPMDExample(
+    "runs/dpmd_water",
+    dp_setting_file="dp.txt",          # "dp 2 O H"
+    dp_model="DNN_seed2.pb",           # deepmd-kit の凍結モデル
+    fallback_potential="nep89.txt",    # DP が使えない場合のフォールバック
+)
+print(example.check_dp_support())
+report = example.execute()             # 実行 → 解析 → 予実表の書き出し
+print(report.to_markdown())</code></pre>
+      </div>
+
+      <h3>予実 (expected vs actual)</h3>
+
+      <p class="prose">
+        公式 example には DP で実行済みの <code>thermo.out</code> / <code>sdc.out</code>
+        が同梱されている。これを <strong>予 (期待値)</strong> とし、本クラスの実行結果を
+        <strong>実 (実測値)</strong> として <code>analysis/validation.{md,csv,png}</code>
+        に出力する。項目は 2 種類に分けてある。
+      </p>
+
+      <ul class="prose">
+        <li><strong>ポテンシャル非依存</strong> (原子数・セル長・平均温度) … 合否判定の対象</li>
+        <li><strong>ポテンシャル依存</strong> (エネルギー・圧力・拡散係数) … DP 以外では「参考」扱い</li>
+      </ul>
+
+      <p class="prose">同梱の実行済み結果 (<code>results/dpmd_water/</code>, NEP89 フォールバック) の抜粋:</p>
+
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr><th>項目</th><th>単位</th><th>予</th><th>実</th><th>判定</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>原子数</td><td>atoms</td><td>1536</td><td>1536</td><td>合格</td></tr>
+            <tr><td>セル長 a</td><td>Å</td><td>25.4381</td><td>25.4381</td><td>合格</td></tr>
+            <tr><td>平均温度</td><td>K</td><td>330</td><td>329.76</td><td>合格</td></tr>
+            <tr><td>自己拡散係数 (MSD 法)</td><td>10⁻⁹ m²/s</td><td>2.3</td><td>1.49</td><td>参考</td></tr>
+            <tr><td>ポテンシャルエネルギー</td><td>eV/atom</td><td>−0.1269</td><td>−4.9977</td><td>参考</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p class="prose" style="color: var(--ink-3); font-size: 13.5px;">
+        エネルギーの原点はポテンシャルごとに異なるため、DP 以外では比較できない。
+        判定対象 4 項目は 4/4 合格。
+      </p>
+
+      <h3>DP が使えない環境について</h3>
+
+      <p class="prose"><code>potential dp.txt &lt;model&gt;.pb</code> を使うには次の両方が必要:</p>
+
+      <ol class="prose">
+        <li>GPUMD を <code>make -f makefile.dp</code> (= <code>-DUSE_TENSORFLOW</code>) でビルドすること</li>
+        <li>deepmd-kit の凍結モデル <code>.pb</code> があること</li>
+      </ol>
+
+      <div class="note warn">
+        <span class="note-tag">この環境の状態</span>
+        <p>
+          <strong>どちらも満たしていない</strong>
+          (<code>/home/tajimamainpc/repos/GPUMD/src/gpumd</code> は DP 無しビルド、
+          example にも <code>.pb</code> は同梱されていない)。
+        </p>
+        <p>
+          そのため <code>DPMDExample</code> は自動的に NEP へフォールバックし、
+          同じワークフロー・同じ予実表で実行する。DP が使える環境へ持っていけば
+          <code>dp_model=</code> を渡すだけで DP 実行に切り替わる。
+        </p>
+      </div>
+    </section>
+
+    <!-- ============================================ 08 -->
+    <section class="sec" id="cli">
+      <h2><span class="n">08</span>コマンドラインスクリプト</h2>
+
+      <div class="block">
+        <div class="block-bar"><span class="block-tag">共通の前置き</span><button class="copy" type="button">copy</button></div>
+<pre><code class="language-bash">source /home/tajimamainpc/.venv/gpumd312/bin/activate
+NEP=/home/tajimamainpc/08_gpumd/02_benchmark/01_CuMoTaVW/nep89_20250409.txt</code></pre>
+      </div>
+
+      <h3>MD 実行 — <code>run_md.py</code></h3>
+
+      <div class="block">
+        <div class="block-bar"><span class="block-tag">bash</span><button class="copy" type="button">copy</button></div>
+<pre><code class="language-bash"># 定温 NVT
+python scripts/run_md.py POSCAR -p $NEP -o runs/si_300K \
+    --ensemble nvt --temperature 300 --steps 20000
+
+# アニール (昇温→保持→降温)
+python scripts/run_md.py structure.cif -p $NEP -o runs/anneal \
+    --profile anneal --t-low 300 --t-high 1200 \
+    --heat-steps 20000 --hold-steps 20000 --cool-steps 40000 \
+    --convert xdatcar traj
+
+# 任意プロファイル ("時刻ps:温度K")
+python scripts/run_md.py POSCAR -p $NEP -o runs/custom \
+    --profile points --points 0:300,10:1000,20:1000,40:300
+
+# NPT
+python scripts/run_md.py POSCAR -p $NEP -o runs/npt --orthorhombic \
+    --ensemble npt --temperature 500 --pressure 0 --steps 10000
+
+# 入力だけ作って中身を確認
+python scripts/run_md.py POSCAR -p $NEP -o runs/check --dry-run</code></pre>
+      </div>
+
+      <h3>結果解析 — <code>analyze_results.py</code></h3>
+
+      <div class="block">
+        <div class="block-bar"><span class="block-tag">bash</span><button class="copy" type="button">copy</button></div>
+<pre><code class="language-bash">python scripts/analyze_results.py runs/si_300K --msd --rdf --convert xdatcar traj
+python scripts/analyze_results.py runs/T*K --compare temperature --compare-output cmp.png</code></pre>
+      </div>
+
+      <h3>DPMD example (予実つき) — <code>run_dpmd_example.py</code></h3>
+
+      <div class="block">
+        <div class="block-bar"><span class="block-tag">bash</span><button class="copy" type="button">copy</button></div>
+<pre><code class="language-bash">python scripts/run_dpmd_example.py -o runs/dpmd_water --fallback-potential $NEP
+
+# DP が使える環境なら:
+python scripts/run_dpmd_example.py -o runs/dpmd_water --dp-setting dp.txt --dp-model model.pb</code></pre>
+      </div>
+
+      <h3>ASE デモ — <code>run_ase_demo.py</code></h3>
+
+      <div class="block">
+        <div class="block-bar"><span class="block-tag">bash</span><button class="copy" type="button">copy</button></div>
+<pre><code class="language-bash">python scripts/run_ase_demo.py POSCAR -p $NEP -o runs/ase --backend cpu \
+    --relax --relax-cell --md --steps 2000 --temperature 300 --convert xdatcar</code></pre>
+      </div>
+
+      <h3>環境確認 — <code>check_environment.py</code></h3>
+
+      <div class="block">
+        <div class="block-bar"><span class="block-tag">bash</span><button class="copy" type="button">copy</button></div>
+<pre><code class="language-bash">python scripts/check_environment.py          # 人間向け
+python scripts/check_environment.py --json   # 機械可読</code></pre>
+      </div>
+
+      <h3>並列温度スキャン — <code>run_parallel_scan.py</code></h3>
+
+      <div class="block">
+        <div class="block-bar"><span class="block-tag">bash</span><button class="copy" type="button">copy</button></div>
+<pre><code class="language-bash">python scripts/run_parallel_scan.py POSCAR -p $NEP -o runs/scan \
+    --temperatures 300 600 900 1200 --steps 20000 --n-jobs 2</code></pre>
+      </div>
+    </section>
+
+    <!-- ============================================ 09 -->
+    <section class="sec" id="tests">
+      <h2><span class="n">09</span>テスト</h2>
+
+      <div class="block">
+        <div class="block-bar"><span class="block-tag">bash</span><button class="copy" type="button">copy</button></div>
+<pre><code class="language-bash">source /home/tajimamainpc/.venv/gpumd312/bin/activate
+python -m pytest tests/ -v</code></pre>
+      </div>
+
+      <p class="prose">
+        <code>gpumd</code> が見つからない環境では GPUMD 実行を伴うテストは自動 skip される。
+        現環境では 27 件すべて通る。
+      </p>
+    </section>
+
+    <!-- ============================================ 10 -->
+    <section class="sec" id="design">
+      <h2><span class="n">10</span>設計メモ</h2>
+
+      <ul class="prose">
+        <li>
+          <strong>入力生成</strong>は calorine (<code>calorine.gpumd.write_xyz</code>) を使用。
+          ASE の extxyz ライタは速度の単位換算 (ASE 単位 ↔ Å/fs) をしないため。
+        </li>
+        <li>
+          <strong>実行</strong>は <code>subprocess</code> +
+          <code>bash -lc "source &lt;venv&gt;/bin/activate &amp;&amp; gpumd"</code>。
+          GPU 指定は <code>CUDA_VISIBLE_DEVICES</code>。標準出力は <code>gpumd.out</code> に保存する。
+        </li>
+        <li>
+          <strong>原子数</strong>は既定で 10,000 を上限とし、超えると例外 (mission の指示)。
+          <code>min_cell_length</code> を指定すると、NEP のカットオフを満たす最小のスーパーセルを
+          上限内で自動決定する。
+        </li>
+        <li>
+          <strong><code>run.in</code> のキーワードは非 propagating</strong>
+          (次の <code>run</code> に引き継がれない) ため、<code>MDStage</code> ごとに
+          <code>dump_thermo</code> / <code>dump_xyz</code> を書き直している。
+          <code>MDAnalyzer</code> はこの構造を逆にたどって時間軸とステージを復元する。
+        </li>
+      </ul>
+    </section>
+
+  </div>
+  </main>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script>
+(function () {
+  // --- シンタックスハイライト --------------------------------------
+  if (window.hljs) {
+    document.querySelectorAll('pre code[class^="language-"]').forEach(function (el) {
+      try { window.hljs.highlightElement(el); } catch (e) { /* 素のまま表示 */ }
+    });
+  }
+
+  // --- コードのコピー ----------------------------------------------
+  document.querySelectorAll('.copy').forEach(function (button) {
+    button.addEventListener('click', function () {
+      var block = button.closest('.block');
+      var code = block && block.querySelector('code');
+      if (!code) return;
+      var write = navigator.clipboard
+        ? navigator.clipboard.writeText(code.innerText)
+        : Promise.reject();
+      write.then(function () {
+        button.textContent = 'copied';
+        button.classList.add('done');
+      }).catch(function () {
+        button.textContent = 'select manually';
+      }).finally(function () {
+        setTimeout(function () {
+          button.textContent = 'copy';
+          button.classList.remove('done');
+        }, 1600);
+      });
+    });
+  });
+
+  // --- 読んでいる節を索引で示す -------------------------------------
+  var links = Array.prototype.slice.call(document.querySelectorAll('.rail-link'));
+  var byId = {};
+  links.forEach(function (link) { byId[link.getAttribute('href').slice(1)] = link; });
+
+  var sections = Array.prototype.slice.call(document.querySelectorAll('.sec'));
+  if (links[0]) links[0].classList.add('on');
+
+  if ('IntersectionObserver' in window) {
+    var visible = new Set();
+    var observer = new IntersectionObserver(function (entries) {
+      entries.forEach(function (entry) {
+        if (entry.isIntersecting) visible.add(entry.target.id);
+        else visible.delete(entry.target.id);
+      });
+      for (var i = 0; i < sections.length; i++) {
+        if (visible.has(sections[i].id)) {
+          links.forEach(function (link) { link.classList.remove('on'); });
+          if (byId[sections[i].id]) byId[sections[i].id].classList.add('on');
+          break;
+        }
+      }
+    }, { rootMargin: '-10% 0px -70% 0px' });
+    sections.forEach(function (section) { observer.observe(section); });
+  }
+})();
+</script>
