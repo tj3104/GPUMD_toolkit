@@ -11,6 +11,7 @@
 03_gpumd_python_script/
 ├── gpumd_toolkit/
 │   ├── config.py         GPUMDEnvironment  … 仮想環境・実行ファイル・GPU の設定
+│   ├── fastio.py         read_fast など     … 構造ファイルの高速読み込み / xyz 変換
 │   ├── structure.py      StructureHandler  … POSCAR / CIF などの入出力と model.xyz 生成
 │   ├── profiles.py       TemperatureProfile… 昇温・降温・定温・任意温度プロファイル
 │   ├── inputs.py         RunInputBuilder / MDStage / DumpSettings … run.in の組み立て
@@ -100,6 +101,7 @@ result.to_xdatcar()                 # runs/si_300K/XDATCAR
 | `calc.nve(steps=…)` | `ensemble nve` | |
 | `calc.nvt(temperature=…, steps=…, thermostat=…)` | `nvt_ber` / `nvt_nhc` (既定) / `nvt_bdp` / `nvt_lan` / `nvt_bao` / `nvt_mttk` | `temperature_end=` で昇温/降温 |
 | `calc.npt(temperature=…, pressure=…, steps=…, barostat=…)` | `npt_ber` / `npt_scr` (既定) / `npt_mttk` | 圧力はスカラー / 3 成分 / 6 成分 |
+| `calc.nph(pressure=…, steps=…)` | `nph_mttk` | 熱浴なしでセルだけ緩和する |
 
 ```python
 # 段階的に積み上げる (すべて 1 つの run.in にステージとして並ぶ)
@@ -109,8 +111,90 @@ calc.npt(temperature=1200, pressure=0.0, steps=20_000)        # NPT
 calc.nve(steps=10_000)                                        # NVE
 ```
 
-`npt_ber` / `npt_scr` は直交セルが前提なので、三斜晶なら
-`GPUMDCalculation(..., orthorhombic=True)` で変換するか `npt_mttk` を使う。
+### 2.2.1 熱浴・圧浴の時定数
+
+GPUMD の `<T_coup>` / `<p_coup>` / `tperiod` / `pperiod` は
+**時間刻みを単位とする無次元量** (τ/Δt) であって時間ではない
+(目安: `T_coup ≈ 100`, `p_coup ≈ 1000`, `pperiod ≥ 200`)。
+無次元量をそのまま渡すことも、`tau_T` / `tau_p` に **fs** で渡して
+自動換算させることもできる。
+
+```python
+calc = GPUMDCalculation("POSCAR", NEP, "runs/x", time_step=2.0)
+
+calc.nvt(temperature=300, steps=10_000, T_coup=100)     # tau_T/dt = 100
+calc.nvt(temperature=300, steps=10_000, tau_T=200)      # 200 fs / 2 fs = 100 と同じ
+
+calc.npt(temperature=300, steps=10_000,
+         tau_T=200,      # 熱浴の時定数 [fs]
+         tau_p=4000)     # 圧浴の時定数 [fs] (npt_mttk なら pperiod になる)
+```
+
+`tau_*/time_step < 1` は GPUMD が受け付けないので、その場で例外にする。
+ステージごとに `time_step=` を変えた場合はそのステージの刻みで換算する。
+
+### 2.2.2 セル形状と変調する軸
+
+GPUMD の `model.xyz` は 9 成分の `lattice` を取るので、**セルの形状に制限は
+ない** (三斜晶でもそのまま計算できる)。制限があるのは NPT の圧力指定の方で、
+
+| `cell_mode` | 圧力成分 | セルの動き | セルの条件 |
+|---|---|---|---|
+| `iso` | 1 (静水圧) | 体積のみ (等方) | 直交セル |
+| `ortho` | 3 (xx, yy, zz) | 3 軸独立 | 直交セル |
+| `tri` | 6 (xx, yy, zz, yz, xz, xy) | 6 自由度すべて | 任意 (三斜晶可) |
+
+`cell_mode` を省略すると、**構造が三斜晶なら自動的に `tri`** に切り替える
+(直交セルなら `pressure` の成分数から決める)。直方晶セルに直したい場合だけ
+`GPUMDCalculation(..., orthorhombic=True)` を使う。
+
+変調する軸は `free_axes` / `fixed_axes` で選ぶ。
+
+```python
+calc.npt(temperature=300, steps=10_000, free_axes=("z",))     # c 軸だけ動かす
+calc.npt(temperature=300, steps=10_000, fixed_axes=("xy",))   # xy 剪断だけ止める
+calc.npt(temperature=300, steps=10_000, pressure=(5, 0, 0))   # x に 5 GPa
+```
+
+`npt_ber` / `npt_scr` では「固定したい成分の弾性率を 2000 GPa 超にすると
+GPUMD がその成分のカップリングを 0 にする」という仕様を使っている
+(`gpumd_toolkit.inputs.FROZEN_MODULUS`)。実際に `free_axes=("z",)` で
+300 ステップ回すと a, b の標準偏差は 0.00 Å、c だけが 0.019 Å 揺らぐ。
+
+`npt_mttk` は GPUMD 側に方向指定があるのでそれをそのまま使う。
+
+```python
+calc.npt(temperature=300, steps=10_000, barostat="npt_mttk",
+         mttk_direction="aniso")                       # 3 軸独立
+calc.npt(temperature=300, steps=10_000, barostat="npt_mttk",
+         mttk_direction="x", pressure=5.0)             # x に 5 GPa、他は固定
+calc.npt(temperature=300, steps=10_000, barostat="npt_mttk",
+         mttk_direction={"x": 5.0, "y": 0.0, "z": 0.0})  # 成分ごとに圧力
+calc.npt(temperature=300, steps=10_000, barostat="npt_mttk",
+         pressure=0.0, pressure_end=5.0)               # 圧力ランプ
+```
+
+`calc.describe()` は各 NPT ステージがどの軸をどう動かすかを表示する。
+
+```
+ 1. npt_scr_300K                  npt_scr       10,000 steps
+    cell_mode=ortho (xx: 固定, yy: 固定, zz: 0 GPa)
+```
+
+セルまわりのユーティリティ:
+
+```python
+StructureHandler.cell_thickness(atoms)   # 面間距離 (GPUMD が近接リストに使う量)
+StructureHandler.classify_cell(atoms)    # 'cubic' … 'triclinic'
+StructureHandler.to_standard_cell(atoms) # 下三角形 (LAMMPS 標準形) へ回転
+StructureHandler.reduce_cell(atoms)      # Niggli / Minkowski 簡約
+```
+
+`min_cell_length` は **辺の長さではなく面間距離** の下限として扱う。
+斜めのセルでは辺が長くても厚みが足りないことがあり、GPUMD 本体も
+近接リストの繰り返し数を厚み (`volume / 面積`) から決めているため。
+例: fcc Cu の菱面体プリミティブセル (a=2.546 Å, 60°) の厚みは 2.08 Å しかなく、
+12 Å を満たすには 5×5×5 ではなく 6×6×6 が必要になる。
 
 ### 2.3 任意の温度プロファイル
 
@@ -159,6 +243,51 @@ print(calc.describe())   # ステージ一覧
 print(calc.preview())    # 生成される run.in
 calc.run(dry_run=True)   # model.xyz と run.in だけ書き出す
 ```
+
+---
+
+## 2.6 構造の高速読み込み — `gpumd_toolkit.fastio`
+
+`ase.io.read` は汎用だが、原子数が増えると形式によって極端に遅くなる。
+そこで読み込みは既定で高速経路を通るようにした
+(`StructureHandler.read(..., fast=False)` で従来どおりの ASE 経由に戻せる)。
+
+| 形式 | `ase.io.read` | 本ツールキット | 経路 |
+|---|---|---|---|
+| CIF | 28.7 s | **1.84 s** / 2 回目以降 **0.002 s** | pymatgen + xyz キャッシュ |
+| POSCAR | 13 ms | **3 ms** | numpy だけの専用パーサ |
+| extxyz | 4 ms | **2 ms** | numpy だけの専用パーサ |
+
+(Cu 4,000 原子, ase 3.29 / pymatgen 2026.5.4 で実測。
+`python scripts/convert_structure.py <file> --benchmark` で再現できる。)
+
+CIF などの遅い形式は、一度読んだ結果を extxyz に変換して使い回す。
+キャッシュのキーは元ファイルの絶対パス + mtime + サイズなので、構造を
+書き換えれば自動的に作り直される。保存先は
+`cache_dir` 引数 → 環境変数 `GPUMD_TOOLKIT_CACHE` → `~/.cache/gpumd_toolkit/xyz`
+の順で決まる。
+
+```python
+from gpumd_toolkit import cif_to_xyz, poscar_to_xyz, convert_to_xyz, read_fast
+
+cif_to_xyz("big.cif")                 # -> big.xyz (入力の隣に作る)
+poscar_to_xyz("POSCAR", "model.xyz")
+convert_to_xyz("structure.pdb")
+
+atoms = read_fast("big.xyz")          # 0.002 s
+```
+
+コマンドラインからも使える。
+
+```bash
+python scripts/convert_structure.py big.cif               # cif2xyz
+python scripts/convert_structure.py structures/*.cif --outdir xyz/
+python scripts/convert_structure.py big.cif --benchmark   # 予実 (どれだけ速いか)
+python scripts/convert_structure.py --clear-cache
+```
+
+`GPUMDCalculation` / `ASEMDRunner` も既定でこの経路を使う
+(`fast_read=False` / `cache_structure=False` で無効化)。
 
 ---
 
@@ -248,6 +377,47 @@ runner.run_md(ensemble="nvt", temperature=300, temperature_end=600,
 runner.plot(); runner.save_log()
 runner.write_trajectory("runs/ase/XDATCAR", fmt="xdatcar")
 ```
+
+### 6.1 積分器と時定数 (`taut` / `taup` / `pfactor`)
+
+`ensemble` で ASE 側の積分器を選ぶ。時定数はすべて **fs** で指定する。
+
+| `ensemble` | ASE のクラス | 調整できる時定数 |
+|---|---|---|
+| `nve` | `VelocityVerlet` | — |
+| `nvt` (既定) | `Langevin` | `friction` [1/fs] |
+| `nvt_berendsen` | `NVTBerendsen` | `taut` |
+| `nvt_bussi` | `Bussi` | `taut` |
+| `nvt_nose_hoover` | `MelchionnaNPT` (barostat なし) | `ttime` |
+| `npt` = `npt_berendsen` | `NPTBerendsen` | `taut`, `taup`, `bulk_modulus_GPa` |
+| `npt_inhomogeneous` | `Inhomogeneous_NPTBerendsen` | 同上 + `npt_axes` |
+| `npt_parrinello_rahman` | `MelchionnaNPT` | `ttime`, `ptime`, `pfactor`, `npt_axes` |
+
+```python
+runner.run_md(ensemble="nvt_berendsen", temperature=300, taut=200, steps=5000)
+
+runner.run_md(ensemble="npt", temperature=300, pressure_GPa=0.0,
+              taut=100, taup=1000, bulk_modulus_GPa=140, steps=5000)
+
+# Parrinello-Rahman で c 軸だけ動かす
+runner.run_md(ensemble="npt_parrinello_rahman", temperature=300,
+              ttime=50, ptime=2000, bulk_modulus_GPa=140,
+              npt_axes=("z",), steps=5000)
+```
+
+* `pfactor` は `ptime**2 * bulk_modulus` として組み立てる
+  (`pfactor=` を直接渡せばそちらが優先)。
+* Berendsen の圧縮率は `compressibility_au = 1 / bulk_modulus_GPa`。
+  既定値は 100 GPa (固体向け)。
+* `npt_axes` は ASE の `mask` に変換される。`('x','y','z')` なら 3 軸独立、
+  `('z',)` なら c 軸のみ、`('xy',)` のように剪断成分も指定できる
+  (`mask=` を直接渡すことも可能)。
+* ASE の `MelchionnaNPT` は三角行列のセルしか扱えないので、そうでない場合は
+  自動的に標準形へ回転する (原子の相対配置は不変。警告を出す)。
+
+積分器だけ取り出したいときは `runner.make_dynamics(...)`。
+NEP 以外の calculator を使いたいときは
+`ASEMDRunner(atoms, calculator=EMT(), ...)` のように注入できる。
 
 calculator 単体で使う場合:
 
@@ -352,6 +522,34 @@ python scripts/run_md.py POSCAR -p $NEP -o runs/npt --orthorhombic \
 
 # 入力だけ作って中身を確認
 python scripts/run_md.py POSCAR -p $NEP -o runs/check --dry-run
+
+# 熱浴・圧浴の時定数を fs で指定
+python scripts/run_md.py POSCAR -p $NEP -o runs/npt \
+    --ensemble npt --temperature 500 --tau-t 100 --tau-p 1000
+
+# c 軸だけ動かす NPT
+python scripts/run_md.py POSCAR -p $NEP -o runs/npt_z \
+    --ensemble npt --temperature 500 --free-axes z
+
+# 三斜晶セルを 6 成分指定でフルに緩和 (cell-mode を省略しても自動で tri になる)
+python scripts/run_md.py structure.cif -p $NEP -o runs/npt_tri \
+    --ensemble npt --temperature 500 --cell-mode tri
+
+# npt_mttk で x 方向にだけ 5 GPa
+python scripts/run_md.py POSCAR -p $NEP -o runs/uniaxial \
+    --ensemble npt --barostat npt_mttk --mttk-direction x --pressure 5
+
+# NPH (熱浴なし)
+python scripts/run_md.py POSCAR -p $NEP -o runs/nph --ensemble nph --pressure 0
+```
+
+### 構造の変換・ベンチマーク
+
+```bash
+python scripts/convert_structure.py big.cif                # cif2xyz
+python scripts/convert_structure.py POSCAR -o model.xyz    # POSCAR2xyz
+python scripts/convert_structure.py big.cif --benchmark
+python scripts/convert_structure.py --clear-cache
 ```
 
 ### 結果解析
@@ -374,6 +572,13 @@ python scripts/run_dpmd_example.py -o runs/dpmd_water --dp-setting dp.txt --dp-m
 ```bash
 python scripts/run_ase_demo.py POSCAR -p $NEP -o runs/ase --backend cpu \
     --relax --relax-cell --md --steps 2000 --temperature 300 --convert xdatcar
+
+# 熱浴の時定数を変える / 変調軸を選ぶ
+python scripts/run_ase_demo.py POSCAR -p $NEP -o runs/ase_nvt \
+    --md --ensemble nvt_berendsen --taut 200 --steps 2000
+python scripts/run_ase_demo.py POSCAR -p $NEP -o runs/ase_npt \
+    --md --ensemble npt_parrinello_rahman --pressure 0 \
+    --ttime 50 --ptime 2000 --bulk-modulus 140 --npt-axes z
 ```
 
 ### 環境確認
@@ -405,8 +610,22 @@ python -m pytest tests/ -v
 
 ## 10. 設計メモ
 
+* **構造の読み込み**は `fastio` の高速経路が既定。POSCAR / extxyz は numpy
+  だけの専用パーサ、CIF は pymatgen、それ以外は ASE。遅い形式は extxyz に
+  変換してキャッシュする。`fast=False` でいつでも ASE 経由に戻せる。
 * **入力生成** は calorine (`calorine.gpumd.write_xyz`) を使用。ASE の extxyz
   ライタは速度の単位換算 (ASE 単位 ↔ Å/fs) をしないため。
+  (`fastio.write_xyz_fast` は単位換算込みの軽量ライタで、
+  `StructureHandler.write_model(..., fast=True)` から使える。)
+* **時定数**は GPUMD が τ/Δt という無次元量を取るので、`tau_T` / `tau_p`
+  (fs) は `RunInputBuilder` / `MDStage` の `time_step` を見て換算する。
+  ステージごとに刻みを変えた場合はそのステージの刻みを使う。
+* **NPT の軸固定**は `npt_ber` / `npt_scr` では弾性率 > 2000 GPa、
+  `npt_mttk` では `direction` の指定で実現する。どちらも GPUMD 本体の仕様
+  (`src/integrate/integrate.cu`, `doc/gpumd/input_parameters/ensemble_*.rst`)
+  に沿ったもので、ツールキット側で積分器に手を入れているわけではない。
+* **セルの厚み**は `volume / 面積` で評価する (GPUMD の `Box::thickness_*`
+  と同じ定義)。スーパーセルの判定も辺長ではなくこちらで行う。
 * **実行** は `subprocess` + `bash -lc "source <venv>/bin/activate && gpumd"`。
   GPU 指定は `CUDA_VISIBLE_DEVICES`。標準出力は `gpumd.out` に保存する。
 * **原子数**は既定で 10,000 を上限とし、超えると例外 (mission の指示)。

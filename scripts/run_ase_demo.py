@@ -11,6 +11,15 @@ python scripts/run_ase_demo.py POSCAR -p nep.txt -o runs/ase_demo --backend gpu
 
 # pyNEP (NEP_CPU) を使う
 python scripts/run_ase_demo.py POSCAR -p nep.txt -o runs/ase_demo --backend pynep
+
+# 熱浴の時定数を変えて NVT (Berendsen)
+python scripts/run_ase_demo.py POSCAR -p nep.txt -o runs/ase_nvt \
+    --md --ensemble nvt_berendsen --taut 200 --steps 2000
+
+# Parrinello-Rahman NPT で c 軸だけ動かす
+python scripts/run_ase_demo.py POSCAR -p nep.txt -o runs/ase_npt \
+    --md --ensemble npt_parrinello_rahman --pressure 0 \
+    --ttime 50 --ptime 2000 --bulk-modulus 140 --npt-axes z
 """
 
 from __future__ import annotations
@@ -40,11 +49,33 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--fmax", type=float, default=0.01)
     parser.add_argument("--md", action="store_true", help="簡易 MD を回す")
     parser.add_argument("--ensemble", default="nvt",
-                        choices=["nve", "nvt", "nvt_nose_hoover", "npt"])
+                        choices=["nve", "nvt", "nvt_berendsen", "nvt_bussi",
+                                 "nvt_nose_hoover", "npt", "npt_berendsen",
+                                 "npt_inhomogeneous", "npt_parrinello_rahman"])
     parser.add_argument("--temperature", type=float, default=300.0)
     parser.add_argument("--temperature-end", type=float, default=None)
     parser.add_argument("--steps", type=int, default=1000)
     parser.add_argument("--time-step", type=float, default=1.0)
+
+    group = parser.add_argument_group("熱浴・圧浴 (すべて fs)")
+    group.add_argument("--taut", type=float, default=100.0,
+                       help="Berendsen 系の温度の時定数 [fs]")
+    group.add_argument("--taup", type=float, default=1000.0,
+                       help="Berendsen 系の圧力の時定数 [fs]")
+    group.add_argument("--ttime", type=float, default=25.0,
+                       help="Nose-Hoover / Parrinello-Rahman の特性時間 [fs]")
+    group.add_argument("--ptime", type=float, default=1000.0,
+                       help="Parrinello-Rahman の特性時間 [fs] (pfactor の元)")
+    group.add_argument("--pfactor", type=float, default=None,
+                       help="ASE の pfactor を直接指定する (--ptime より優先)")
+    group.add_argument("--friction", type=float, default=0.01,
+                       help="Langevin の摩擦係数 [1/fs]")
+    group.add_argument("--pressure", type=float, nargs="+", default=[0.0],
+                       help="目標圧力 [GPa] (1 / 3 / 6 成分)")
+    group.add_argument("--bulk-modulus", type=float, default=100.0,
+                       help="体積弾性率の概算 [GPa] (圧縮率・pfactor に使う)")
+    group.add_argument("--npt-axes", nargs="+", default=None,
+                       help="セル変調を許す軸 (x y z / xy yz xz)。他は固定される")
     parser.add_argument("--convert", default=None,
                         help="MD 後にトラジェクトリを変換する形式 (xdatcar / extxyz など)")
     return parser
@@ -88,12 +119,22 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.md:
         print("\n--- 簡易 MD ---")
+        pressure = args.pressure[0] if len(args.pressure) == 1 else tuple(args.pressure)
         runner.run_md(
             ensemble=args.ensemble,
             temperature=args.temperature,
             temperature_end=args.temperature_end,
             steps=args.steps,
             time_step=args.time_step,
+            friction=args.friction,
+            pressure_GPa=pressure,
+            taut=args.taut,
+            taup=args.taup,
+            ttime=args.ttime,
+            ptime=args.ptime,
+            pfactor=args.pfactor,
+            bulk_modulus_GPa=args.bulk_modulus,
+            npt_axes=tuple(args.npt_axes) if args.npt_axes else None,
         )
         frame = runner.to_dataframe()
         print(frame.tail(5).to_string(index=False))

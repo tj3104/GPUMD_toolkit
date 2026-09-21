@@ -29,6 +29,7 @@ from .analysis import MDAnalyzer, ThermoData
 from .config import CommandResult, GPUMDEnvironment
 from .inputs import (
     ALL_ENSEMBLES,
+    NPH_ENSEMBLES,
     NPT_ENSEMBLES,
     NVT_ENSEMBLES,
     DumpSettings,
@@ -112,9 +113,19 @@ class GPUMDCalculation:
         ``velocity`` キーワードで与える初期温度 [K]。
         ``None`` なら最初のステージの ``T_start`` を使う。
     repeat / min_cell_length
-        スーパーセルの作り方。``repeat`` 優先。
+        スーパーセルの作り方。``repeat`` 優先。``min_cell_length`` は
+        辺の長さではなく **面間距離** の下限として扱う (斜めのセル対策)。
     orthorhombic
-        直方晶セルへ変換するか (NPT の等方セル制御に必要)。
+        直方晶セルへ変換するか (``npt_ber`` / ``npt_scr`` の 1 成分・3 成分
+        指定に必要)。三斜晶のまま NPT したい場合は不要 —
+        :meth:`npt` が自動で 6 成分指定に切り替える。
+    reduce_cell
+        ``'niggli'`` / ``'minkowski'`` を指定すると、スーパーセル化の前に
+        セルを簡約してできるだけ立方体に近づける (斜めのセルで原子数を節約)。
+    standard_cell
+        セルを下三角形 (LAMMPS 標準形) に回転するか。
+    fast_read / cache_structure
+        構造の読み込みで高速経路 (専用パーサ + xyz キャッシュ) を使うか。
     max_atoms
         原子数の上限 (mission.md: 多くとも 1 万程度)。
     environment
@@ -136,6 +147,10 @@ class GPUMDCalculation:
         repeat: Sequence[int] | int | None = None,
         min_cell_length: float | None = None,
         orthorhombic: bool = False,
+        reduce_cell: str | None = None,
+        standard_cell: bool = False,
+        fast_read: bool = True,
+        cache_structure: bool = True,
         max_atoms: int = DEFAULT_MAX_ATOMS,
         groupings: list[list[list[int]]] | None = None,
         environment: GPUMDEnvironment | None = None,
@@ -157,13 +172,17 @@ class GPUMDCalculation:
             self.source_structure = None
         else:
             self.source_structure = Path(structure).expanduser().resolve()
-            atoms = StructureHandler.read(self.source_structure)
+            atoms = StructureHandler.read(
+                self.source_structure, fast=fast_read, cache=cache_structure
+            )
         self.atoms = StructureHandler.make_cell(
             atoms,
             repeat=repeat,
             min_length=min_cell_length,
             max_atoms=max_atoms,
             orthorhombic=orthorhombic,
+            reduce=reduce_cell,
+            standard_cell=standard_cell,
         )
         self.structure_info = StructureHandler.info(self.atoms)
 
@@ -260,12 +279,16 @@ class GPUMDCalculation:
         temperature_end: float | None = None,
         thermostat: str = "nvt_nhc",
         T_coup: float = 100.0,
+        tau_T: float | None = None,
         **kwargs,
     ) -> "GPUMDCalculation":
         """NVT (カノニカル) ステージを追加する。
 
         ``temperature_end`` を与えると、その run の間に目標温度が線形に変化する
         (昇温・降温)。
+
+        熱浴の時定数は ``T_coup`` (= :math:`\\tau_T/\\Delta t`、無次元) か
+        ``tau_T`` (**fs**、時間刻みから自動換算) のどちらでも指定できる。
         """
         if thermostat not in NVT_ENSEMBLES:
             raise ValueError(f"NVT の thermostat は {NVT_ENSEMBLES} から選びます。")
@@ -276,6 +299,7 @@ class GPUMDCalculation:
                 T_start=temperature,
                 T_end=temperature_end,
                 T_coup=T_coup,
+                tau_T=tau_T,
                 **kwargs,
             )
         )
@@ -286,29 +310,56 @@ class GPUMDCalculation:
         temperature: float,
         steps: int,
         pressure: float | Sequence[float] = 0.0,
+        pressure_end: float | Sequence[float] | None = None,
         temperature_end: float | None = None,
         barostat: str = "npt_scr",
         T_coup: float = 100.0,
         p_coup: float = 1000.0,
+        tau_T: float | None = None,
+        tau_p: float | None = None,
         elastic_modulus: float | Sequence[float] = 100.0,
+        cell_mode: str | None = None,
+        fixed_axes: Sequence[str] = (),
+        free_axes: Sequence[str] | None = None,
         **kwargs,
     ) -> "GPUMDCalculation":
         """NPT (等温等圧) ステージを追加する。
 
-        ``pressure`` は GPa。スカラー (等方)、3 成分 (xx, yy, zz)、
-        6 成分 (xx, yy, zz, yz, xz, xy) に対応する。
-        ``npt_ber`` / ``npt_scr`` では ``elastic_modulus`` [GPa] の概算値が必要
-        (桁が合っていればよい)。
+        Parameters
+        ----------
+        pressure, pressure_end
+            目標圧力 [GPa]。スカラー (静水圧)、3 成分 (xx, yy, zz)、
+            6 成分 (xx, yy, zz, yz, xz, xy) に対応する。
+            ``pressure_end`` は ``npt_mttk`` でのみ有効 (圧力ランプ)。
+        T_coup, p_coup
+            :math:`\\tau_T/\\Delta t`, :math:`\\tau_p/\\Delta t` (無次元)。
+        tau_T, tau_p
+            時定数を **fs** で指定する場合はこちら (時間刻みから自動換算)。
+        cell_mode
+            ``npt_ber`` / ``npt_scr`` のセル自由度
+            (``'iso'`` / ``'ortho'`` / ``'tri'``)。``None`` なら構造のセル形状と
+            ``pressure`` の成分数から自動で決める (三斜晶なら ``'tri'``)。
+        fixed_axes, free_axes
+            変調を許す / 禁じる軸 (``'x'``, ``'y'``, ``'z'``, ``'yz'``,
+            ``'xz'``, ``'xy'``)。``npt_ber`` / ``npt_scr`` では固定軸の弾性率を
+            2000 GPa 超にして GPUMD 側のカップリングを 0 にする。
+            ``npt_mttk`` では ``free_axes`` がそのまま ``direction`` になる。
+        elastic_modulus
+            ``npt_ber`` / ``npt_scr`` に必要な弾性率の概算値 [GPa]
+            (桁が合っていればよい)。
+
+        Examples
+        --------
+        >>> calc.npt(temperature=300, steps=10000, pressure=0.0)       # 等方
+        >>> calc.npt(temperature=300, steps=10000, free_axes=("z",))   # c 軸だけ動かす
+        >>> calc.npt(temperature=300, steps=10000, barostat="npt_mttk",
+        ...          free_axes=("x", "y", "z"))                        # aniso 相当
         """
         if barostat not in NPT_ENSEMBLES:
             raise ValueError(f"NPT の barostat は {NPT_ENSEMBLES} から選びます。")
-        if barostat != "npt_mttk" and not self.structure_info.orthorhombic:
-            import warnings
-
-            warnings.warn(
-                f"{barostat} は直交セルを前提とします。"
-                " orthorhombic=True で変換するか npt_mttk (tri) を使ってください。",
-                RuntimeWarning,
+        if barostat != "npt_mttk":
+            cell_mode = self._resolve_cell_mode(
+                barostat, cell_mode, pressure, fixed_axes, free_axes
             )
         return self.add_stage(
             MDStage(
@@ -317,12 +368,90 @@ class GPUMDCalculation:
                 T_start=temperature,
                 T_end=temperature_end,
                 T_coup=T_coup,
+                tau_T=tau_T,
                 pressure=pressure,
+                pressure_end=pressure_end,
                 elastic_modulus=elastic_modulus,
                 p_coup=p_coup,
+                tau_p=tau_p,
+                cell_mode=cell_mode,
+                fixed_axes=fixed_axes,
+                free_axes=free_axes,
                 **kwargs,
             )
         )
+
+    def nph(
+        self,
+        *,
+        steps: int,
+        pressure: float | Sequence[float] = 0.0,
+        pressure_end: float | Sequence[float] | None = None,
+        direction: str | Sequence[str] = "iso",
+        p_period: float = 1000.0,
+        tau_p: float | None = None,
+        **kwargs,
+    ) -> "GPUMDCalculation":
+        """NPH (等エンタルピー) ステージを追加する (``nph_mttk``)。
+
+        熱浴を使わずセルだけ動かしたい場合 (二相法の融点計算など) に使う。
+        """
+        return self.add_stage(
+            MDStage(
+                "nph_mttk",
+                steps=steps,
+                pressure=pressure,
+                pressure_end=pressure_end,
+                mttk_direction=direction,
+                p_period=p_period,
+                tau_p=tau_p,
+                **kwargs,
+            )
+        )
+
+    def _resolve_cell_mode(
+        self,
+        barostat: str,
+        cell_mode: str | None,
+        pressure,
+        fixed_axes: Sequence[str],
+        free_axes: Sequence[str] | None,
+    ) -> str | None:
+        """``npt_ber`` / ``npt_scr`` のセル自由度を構造から決める。
+
+        GPUMD は 1 成分・3 成分の圧力指定を直交セルにしか許さないので、
+        三斜晶セルなら自動的に 6 成分 (``'tri'``) に切り替える。
+        """
+        import warnings
+
+        if cell_mode is not None:
+            if cell_mode != "tri" and not self.structure_info.orthorhombic:
+                warnings.warn(
+                    f"cell_mode='{cell_mode}' は直交セル専用です。"
+                    " 三斜晶セルでは GPUMD が 'Cannot use triclinic box with only"
+                    f" {1 if cell_mode == 'iso' else 3} target pressure components' で止まります。",
+                    RuntimeWarning,
+                )
+            return cell_mode
+        if self.structure_info.orthorhombic:
+            return None  # MDStage 側で pressure / axes から決める
+        probe = MDStage(
+            barostat,
+            steps=1,
+            T_start=1.0,
+            pressure=pressure,
+            fixed_axes=fixed_axes,
+            free_axes=free_axes,
+        )
+        inferred = probe.resolve_cell_mode()
+        if inferred != "tri":
+            warnings.warn(
+                f"セルが三斜晶 ({self.structure_info.cell_shape}) なので "
+                f"{barostat} を 6 成分指定 (cell_mode='tri') に切り替えました。"
+                " 直方晶セルで計算したい場合は orthorhombic=True を指定してください。",
+                RuntimeWarning,
+            )
+        return "tri"
 
     # --------------------------------------------------- 温度プロファイル API
     def heating(self, T_start: float, T_end: float, *, steps: int, **kwargs):
@@ -353,8 +482,19 @@ class GPUMDCalculation:
             raise ValueError(f"未知のアンサンブル: {ensemble}")
         for segment in profile:
             stage_kwargs = dict(kwargs)
-            if ensemble in NPT_ENSEMBLES:
+            if ensemble in NPT_ENSEMBLES + NPH_ENSEMBLES:
                 stage_kwargs.setdefault("pressure", 0.0 if pressure is None else pressure)
+                if ensemble in ("npt_ber", "npt_scr"):
+                    stage_kwargs.setdefault(
+                        "cell_mode",
+                        self._resolve_cell_mode(
+                            ensemble,
+                            stage_kwargs.get("cell_mode"),
+                            stage_kwargs["pressure"],
+                            stage_kwargs.get("fixed_axes", ()),
+                            stage_kwargs.get("free_axes"),
+                        ),
+                    )
             self.add_stage(
                 MDStage(
                     ensemble,
@@ -402,6 +542,10 @@ class GPUMDCalculation:
                     "T_start": stage.T_start,
                     "T_end": stage.T_end,
                     "pressure": stage.pressure,
+                    "T_coup": stage.temperature_coupling(self.builder.time_step),
+                    "tau_T_fs": stage.tau_T,
+                    "tau_p_fs": stage.tau_p,
+                    "cell_control": stage.describe_cell_control(self.builder.time_step),
                 }
                 for stage in self.builder.stages
             ],
@@ -477,4 +621,8 @@ class GPUMDCalculation:
             lines.append(
                 f"    {i:2d}. {stage.label:<30s} {stage.ensemble:<9s} {stage.steps:>9,d} steps"
             )
+            if stage.ensemble in NPT_ENSEMBLES + NPH_ENSEMBLES:
+                lines.append(
+                    f"        {stage.describe_cell_control(self.builder.time_step)}"
+                )
         return "\n".join(lines)

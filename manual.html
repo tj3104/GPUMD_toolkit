@@ -475,15 +475,16 @@ td:first-child { white-space: nowrap; }
     <ul class="rail-list">
       <li><a class="rail-link" href="#overview"><span class="n">00</span><span>概要と構成</span></a></li>
       <li><a class="rail-link" href="#setup"><span class="n">01</span><span>セットアップ</span></a></li>
-      <li><a class="rail-link" href="#md"><span class="n">02</span><span>MD 計算</span></a></li>
-      <li><a class="rail-link" href="#analysis"><span class="n">03</span><span>解析・可視化</span></a></li>
-      <li><a class="rail-link" href="#traj"><span class="n">04</span><span>トラジェクトリ変換</span></a></li>
-      <li><a class="rail-link" href="#parallel"><span class="n">05</span><span>並列実行</span></a></li>
-      <li><a class="rail-link" href="#ase"><span class="n">06</span><span>ASE ベースの実行</span></a></li>
-      <li><a class="rail-link" href="#dpmd"><span class="n">07</span><span>DPMD example と予実</span></a></li>
-      <li><a class="rail-link" href="#cli"><span class="n">08</span><span>CLI スクリプト</span></a></li>
-      <li><a class="rail-link" href="#tests"><span class="n">09</span><span>テスト</span></a></li>
-      <li><a class="rail-link" href="#design"><span class="n">10</span><span>設計メモ</span></a></li>
+      <li><a class="rail-link" href="#structure"><span class="n">02</span><span>構造の読み込み</span></a></li>
+      <li><a class="rail-link" href="#md"><span class="n">03</span><span>MD 計算</span></a></li>
+      <li><a class="rail-link" href="#analysis"><span class="n">04</span><span>解析・可視化</span></a></li>
+      <li><a class="rail-link" href="#traj"><span class="n">05</span><span>トラジェクトリ変換</span></a></li>
+      <li><a class="rail-link" href="#parallel"><span class="n">06</span><span>並列実行</span></a></li>
+      <li><a class="rail-link" href="#ase"><span class="n">07</span><span>ASE ベースの実行</span></a></li>
+      <li><a class="rail-link" href="#dpmd"><span class="n">08</span><span>DPMD example と予実</span></a></li>
+      <li><a class="rail-link" href="#cli"><span class="n">09</span><span>CLI スクリプト</span></a></li>
+      <li><a class="rail-link" href="#tests"><span class="n">10</span><span>テスト</span></a></li>
+      <li><a class="rail-link" href="#design"><span class="n">11</span><span>設計メモ</span></a></li>
     </ul>
     <div class="rail-foot">
       GPUMD 35b47fe<br>
@@ -511,7 +512,7 @@ td:first-child { white-space: nowrap; }
         <div><dt>GPU</dt><dd>RTX 5070 Ti</dd></div>
         <div><dt>backends</dt><dd class="ok">cpu · gpu · pynep</dd></div>
         <div><dt>原子数上限</dt><dd>10,000</dd></div>
-        <div><dt>tests</dt><dd class="ok">27 passed</dd></div>
+        <div><dt>tests</dt><dd class="ok">69 passed</dd></div>
       </dl>
     </header>
 
@@ -529,6 +530,7 @@ td:first-child { white-space: nowrap; }
       <div class="tree">03_gpumd_python_script/
 ├── <b>gpumd_toolkit/</b>
 │   ├── config.py         <b>GPUMDEnvironment</b>    <span class="dim">仮想環境・実行ファイル・GPU の設定</span>
+│   ├── fastio.py         <b>read_fast など</b>      <span class="dim">構造ファイルの高速読み込み / xyz 変換・キャッシュ</span>
 │   ├── structure.py      <b>StructureHandler</b>    <span class="dim">POSCAR / CIF などの入出力と model.xyz 生成</span>
 │   ├── profiles.py       <b>TemperatureProfile</b>  <span class="dim">昇温・降温・定温・任意温度プロファイル</span>
 │   ├── inputs.py         <b>RunInputBuilder</b>     <span class="dim">MDStage / DumpSettings — run.in の組み立て</span>
@@ -541,7 +543,7 @@ td:first-child { white-space: nowrap; }
 │   ├── diagnostics.py    <b>environment_report</b>  <span class="dim">実行環境の確認</span>
 │   └── examples/dpmd.py  <b>DPMDExample</b>         <span class="star">★ DPMD の example + 予実</span>
 ├── <b>scripts/</b>              <span class="dim">コマンドラインから使うスクリプト</span>
-├── <b>tests/</b>                <span class="dim">自己テスト (pytest, 27 件)</span>
+├── <b>tests/</b>                <span class="dim">自己テスト (pytest, 69 件)</span>
 └── <b>results/</b>              <span class="dim">同梱の実行済み結果 (DPMD example の予実)</span></div>
     </section>
 
@@ -604,10 +606,118 @@ uv pip install "pynep @ git+https://github.com/bigd4/PyNEP.git"</code></pre>
     </section>
 
     <!-- ============================================ 02 -->
-    <section class="sec" id="md">
-      <h2><span class="n">02</span>MD 計算 —<span class="cls">GPUMDCalculation</span></h2>
+    <section class="sec" id="structure">
+      <h2><span class="n">02</span>構造の読み込み —<span class="cls">StructureHandler · fastio</span></h2>
 
-      <h3><span class="n">2.1</span>基本</h3>
+      <p class="prose">
+        <code>ase.io.read</code> は汎用だが、原子数が増えると形式によって極端に遅くなる。
+        そこで読み込みは既定で高速経路を通る。
+        <code>StructureHandler.read(..., fast=False)</code> でいつでも従来どおりの
+        ASE 経由に戻せる。
+      </p>
+
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr><th>形式</th><th><code>ase.io.read</code></th><th>本ツールキット</th><th>経路</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>CIF</td><td>28.7 s</td>
+              <td><strong>1.84 s</strong> / 2 回目以降 <strong>0.002 s</strong></td>
+              <td>pymatgen + xyz キャッシュ</td>
+            </tr>
+            <tr>
+              <td>POSCAR / CONTCAR</td><td>13 ms</td><td><strong>3 ms</strong></td>
+              <td>numpy だけの専用パーサ</td>
+            </tr>
+            <tr>
+              <td>extxyz</td><td>4 ms</td><td><strong>2 ms</strong></td>
+              <td>numpy だけの専用パーサ</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p class="prose">
+        Cu 4,000 原子 (ase 3.29 / pymatgen 2026.5.4) で実測した値。
+        <code>python scripts/convert_structure.py &lt;file&gt; --benchmark</code> で再現できる。
+      </p>
+
+      <h3><span class="n">2.1</span>xyz キャッシュ</h3>
+
+      <p class="prose">
+        CIF のような遅い形式は、一度読んだ結果を extxyz に変換して使い回す
+        (<code>cif2xyz</code> / <code>POSCAR2xyz</code> 相当)。キャッシュのキーは
+        元ファイルの絶対パス + mtime + サイズなので、構造を書き換えれば自動的に
+        作り直される。保存先は <code>cache_dir</code> 引数 → 環境変数
+        <code>GPUMD_TOOLKIT_CACHE</code> → <code>~/.cache/gpumd_toolkit/xyz</code> の順。
+      </p>
+
+      <div class="block">
+        <div class="block-bar"><span class="block-tag">python</span><button class="copy" type="button">copy</button></div>
+<pre><code class="language-python">from gpumd_toolkit import cif_to_xyz, poscar_to_xyz, convert_to_xyz, read_fast
+from gpumd_toolkit import StructureHandler
+
+cif_to_xyz("big.cif")                  # -> big.xyz (入力の隣に作る)
+poscar_to_xyz("POSCAR", "model.xyz")
+convert_to_xyz("structure.pdb")
+
+atoms = read_fast("big.xyz")           # 0.002 s
+atoms = StructureHandler.read("big.cif")            # 初回だけ変換、以後キャッシュ
+atoms = StructureHandler.read("big.cif", fast=False) # 従来どおり ase.io.read</code></pre>
+      </div>
+
+      <div class="block">
+        <div class="block-bar"><span class="block-tag">bash</span><button class="copy" type="button">copy</button></div>
+<pre><code class="language-bash">python scripts/convert_structure.py big.cif                  # cif2xyz
+python scripts/convert_structure.py structures/*.cif --outdir xyz/
+python scripts/convert_structure.py big.cif --benchmark      # 予実 (どれだけ速いか)
+python scripts/convert_structure.py --clear-cache</code></pre>
+      </div>
+
+      <p class="prose">
+        <code>GPUMDCalculation</code> / <code>ASEMDRunner</code> も既定でこの経路を使う
+        (<code>fast_read=False</code> / <code>cache_structure=False</code> で無効化)。
+      </p>
+
+      <h3><span class="n">2.2</span>セル形状のユーティリティ</h3>
+
+      <p class="prose">
+        GPUMD の <code>model.xyz</code> は 9 成分の <code>lattice</code> を取るので、
+        <strong>セルの形状に制限はない</strong>。ただし近接リストで効くのは辺の長さ
+        ではなく <strong>面間距離 (thickness = volume / 面積)</strong> なので、
+        スーパーセルの判定もそちらで行う。
+      </p>
+
+      <div class="block">
+        <div class="block-bar"><span class="block-tag">python</span><button class="copy" type="button">copy</button></div>
+<pre><code class="language-python">StructureHandler.cell_thickness(atoms)    # 面間距離 (GPUMD の Box::thickness_* と同じ定義)
+StructureHandler.classify_cell(atoms)     # 'cubic' / 'tetragonal' / ... / 'triclinic'
+StructureHandler.is_triangular(atoms)     # ASE の NPT が要求する三角行列か
+StructureHandler.to_standard_cell(atoms)  # 下三角形 (LAMMPS 標準形) へ剛体回転
+StructureHandler.reduce_cell(atoms)       # Niggli / Minkowski 簡約
+
+# min_cell_length は「面間距離の下限」として扱われる
+calc = GPUMDCalculation("POSCAR", NEP, "runs/x", min_cell_length=12.0,
+                        reduce_cell="niggli",   # 斜めのセルをできるだけ立方体に近づける
+                        standard_cell=True)     # 下三角形に揃える</code></pre>
+      </div>
+
+      <div class="note">
+        <p>
+          例: fcc Cu の菱面体プリミティブセル (a = 2.546 Å, 60°) は辺が 2.546 Å でも
+          厚みは 2.08 Å しかない。辺長で判定すると 5×5×5 で足りると誤認するが、
+          面間距離で判定すれば 6×6×6 が必要と分かる (NEP のカットオフ 6 Å の 2 倍)。
+        </p>
+      </div>
+    </section>
+
+    <!-- ============================================ 03 -->
+    <section class="sec" id="md">
+      <h2><span class="n">03</span>MD 計算 —<span class="cls">GPUMDCalculation</span></h2>
+
+      <h3><span class="n">3.1</span>基本</h3>
 
       <div class="block">
         <div class="block-bar"><span class="block-tag">python</span><button class="copy" type="button">copy</button></div>
@@ -631,7 +741,7 @@ result.plot()                       # runs/si_300K/analysis/*.png
 result.to_xdatcar()                 # runs/si_300K/XDATCAR</code></pre>
       </div>
 
-      <h3><span class="n">2.2</span>アンサンブル</h3>
+      <h3><span class="n">3.2</span>アンサンブル</h3>
 
       <div class="table-scroll">
         <table>
@@ -654,6 +764,11 @@ result.to_xdatcar()                 # runs/si_300K/XDATCAR</code></pre>
               <td><code>npt_ber</code> / <code>npt_scr</code> (既定) / <code>npt_mttk</code></td>
               <td>圧力はスカラー / 3 成分 / 6 成分</td>
             </tr>
+            <tr>
+              <td><code>calc.nph(pressure=…, steps=…)</code></td>
+              <td><code>nph_mttk</code></td>
+              <td>熱浴なしでセルだけ緩和する</td>
+            </tr>
           </tbody>
         </table>
       </div>
@@ -667,13 +782,105 @@ calc.npt(temperature=1200, pressure=0.0, steps=20_000)        # NPT
 calc.nve(steps=10_000)                                        # NVE</code></pre>
       </div>
 
+      <h3><span class="n">3.3</span>熱浴・圧浴の時定数</h3>
+
+      <div class="note">
+        <p>
+          GPUMD の <code>&lt;T_coup&gt;</code> / <code>&lt;p_coup&gt;</code> /
+          <code>tperiod</code> / <code>pperiod</code> は
+          <strong>時間刻みを単位とする無次元量 (τ/Δt)</strong> であって時間ではない。
+          目安は <code>T_coup ≈ 100</code>、<code>p_coup ≈ 1000</code>、
+          <code>pperiod ≥ 200</code>。
+        </p>
+      </div>
+
       <p class="prose">
-        <code>npt_ber</code> / <code>npt_scr</code> は直交セルが前提なので、三斜晶なら
-        <code>GPUMDCalculation(..., orthorhombic=True)</code> で変換するか
-        <code>npt_mttk</code> を使う。
+        無次元量をそのまま渡すことも、<code>tau_T</code> / <code>tau_p</code> に
+        <strong>fs</strong> で渡して自動換算させることもできる。
+        <code>tau_*/time_step &lt; 1</code> は GPUMD が受け付けないのでその場で例外にする。
+        ステージごとに <code>time_step=</code> を変えた場合はそのステージの刻みで換算する。
       </p>
 
-      <h3><span class="n">2.3</span>任意の温度プロファイル</h3>
+      <div class="block">
+        <div class="block-bar"><span class="block-tag">python</span><button class="copy" type="button">copy</button></div>
+<pre><code class="language-python">calc = GPUMDCalculation("POSCAR", NEP, "runs/x", time_step=2.0)
+
+calc.nvt(temperature=300, steps=10_000, T_coup=100)   # tau_T/dt = 100
+calc.nvt(temperature=300, steps=10_000, tau_T=200)    # 200 fs / 2 fs = 100 (同じ)
+
+calc.npt(temperature=300, steps=10_000,
+         tau_T=200,     # 熱浴の時定数 [fs]
+         tau_p=4000)    # 圧浴の時定数 [fs] (npt_mttk なら pperiod になる)</code></pre>
+      </div>
+
+      <h3><span class="n">3.4</span>セル形状と変調する軸</h3>
+
+      <p class="prose">
+        GPUMD はセルの形状そのものに制限を設けていない。制限があるのは NPT の
+        圧力指定の方で、成分の数でセルの動き方が決まる。
+      </p>
+
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr><th><code>cell_mode</code></th><th>圧力成分</th><th>セルの動き</th><th>セルの条件</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>iso</code></td><td>1 (静水圧)</td><td>体積のみ (等方)</td><td>直交セル</td></tr>
+            <tr><td><code>ortho</code></td><td>3 (xx, yy, zz)</td><td>3 軸独立</td><td>直交セル</td></tr>
+            <tr><td><code>tri</code></td><td>6 (xx, yy, zz, yz, xz, xy)</td><td>6 自由度すべて</td><td>任意 (三斜晶可)</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p class="prose">
+        <code>cell_mode</code> を省略すると、<strong>構造が三斜晶なら自動的に
+        <code>tri</code></strong> に切り替える (直交セルなら <code>pressure</code> の
+        成分数から決める)。直方晶セルに直したい場合だけ
+        <code>GPUMDCalculation(..., orthorhombic=True)</code> を使う。
+      </p>
+
+      <div class="block">
+        <div class="block-bar"><span class="block-tag">python</span><button class="copy" type="button">copy</button></div>
+<pre><code class="language-python"># --- npt_ber / npt_scr: 固定したい成分の弾性率を 2000 GPa 超にする ---
+calc.npt(temperature=300, steps=10_000, free_axes=("z",))     # c 軸だけ動かす
+calc.npt(temperature=300, steps=10_000, fixed_axes=("xy",))   # xy 剪断だけ止める
+calc.npt(temperature=300, steps=10_000, pressure=(5, 0, 0))   # x に 5 GPa
+calc.npt(temperature=300, steps=10_000, cell_mode="tri")      # 6 自由度すべて
+
+# --- npt_mttk: GPUMD 側の direction 指定をそのまま使う ---
+calc.npt(temperature=300, steps=10_000, barostat="npt_mttk",
+         mttk_direction="aniso")                        # 3 軸独立
+calc.npt(temperature=300, steps=10_000, barostat="npt_mttk",
+         mttk_direction="x", pressure=5.0)              # x に 5 GPa、他は固定
+calc.npt(temperature=300, steps=10_000, barostat="npt_mttk",
+         mttk_direction={"x": 5.0, "y": 0.0, "z": 0.0}) # 成分ごとに圧力
+calc.npt(temperature=300, steps=10_000, barostat="npt_mttk",
+         pressure=0.0, pressure_end=5.0)                # 圧力ランプ</code></pre>
+      </div>
+
+      <div class="note">
+        <p>
+          <code>npt_ber</code> / <code>npt_scr</code> の軸固定は
+          「弾性率が 2000 GPa を超える成分はカップリングを 0 にする」という
+          GPUMD 本体の仕様 (<code>src/integrate/integrate.cu</code>) を使っている。
+          実測でも <code>free_axes=("z",)</code> で 300 ステップ回すと
+          a, b の標準偏差は 0.00 Å、c だけが 0.019 Å 揺らぐ。
+          <code>npt_mttk</code> で <code>mttk_direction="x"</code> にすれば a だけが動く。
+        </p>
+      </div>
+
+      <p class="prose">
+        <code>calc.describe()</code> は各 NPT ステージがどの軸をどう動かすかを表示する。
+      </p>
+
+      <div class="block">
+        <div class="block-bar"><span class="block-tag">text</span><button class="copy" type="button">copy</button></div>
+<pre><code> 1. npt_scr_300K                  npt_scr       10,000 steps
+    cell_mode=ortho (xx: 固定, yy: 固定, zz: 0 GPa)</code></pre>
+      </div>
+
+      <h3><span class="n">3.5</span>任意の温度プロファイル</h3>
 
       <figure class="figure">
         <svg viewBox="0 0 660 236" role="img" aria-label="アニールの温度プロファイル: 300 K で 10 ps 平衡化、30 ps までに 1200 K へ昇温、50 ps まで保持、90 ps で 300 K へ降温">
@@ -766,7 +973,7 @@ calc.apply_profile(profile, ensemble="nvt_nhc")   # 各区間が 1 ステージ�
         任意プロファイルはこれを区分線形に並べて表現する。
       </p>
 
-      <h3><span class="n">2.4</span>出力設定</h3>
+      <h3><span class="n">3.6</span>出力設定</h3>
 
       <div class="block">
         <div class="block-bar"><span class="block-tag">python</span><button class="copy" type="button">copy</button></div>
@@ -790,7 +997,7 @@ calc.apply_profile(profile, ensemble="nvt_nhc")   # 各区間が 1 ステージ�
         </p>
       </div>
 
-      <h3><span class="n">2.5</span>実行前の確認</h3>
+      <h3><span class="n">3.7</span>実行前の確認</h3>
 
       <div class="block">
         <div class="block-bar"><span class="block-tag">python</span><button class="copy" type="button">copy</button></div>
@@ -800,9 +1007,9 @@ calc.run(dry_run=True)   # model.xyz と run.in だけ書き出す</code></pre>
       </div>
     </section>
 
-    <!-- ============================================ 03 -->
+    <!-- ============================================ 04 -->
     <section class="sec" id="analysis">
-      <h2><span class="n">03</span>解析・可視化 —<span class="cls">MDAnalyzer</span></h2>
+      <h2><span class="n">04</span>解析・可視化 —<span class="cls">MDAnalyzer</span></h2>
 
       <p class="prose">
         <code>thermo.out</code> を <code>run.in</code> と突き合わせて
@@ -830,9 +1037,9 @@ compare_runs(["runs/T300K", "runs/T600K"], quantity="temperature", filename="cmp
       </div>
     </section>
 
-    <!-- ============================================ 04 -->
+    <!-- ============================================ 05 -->
     <section class="sec" id="traj">
-      <h2><span class="n">04</span>トラジェクトリ変換 —<span class="cls">TrajectoryConverter</span></h2>
+      <h2><span class="n">05</span>トラジェクトリ変換 —<span class="cls">TrajectoryConverter</span></h2>
 
       <div class="block">
         <div class="block-bar"><span class="block-tag">python</span><button class="copy" type="button">copy</button></div>
@@ -854,9 +1061,9 @@ t.rdf(rmax=8.0, stride=10)                        # g(r)</code></pre>
       </p>
     </section>
 
-    <!-- ============================================ 05 -->
+    <!-- ============================================ 06 -->
     <section class="sec" id="parallel">
-      <h2><span class="n">05</span>並列実行 —<span class="cls">ParallelRunner</span></h2>
+      <h2><span class="n">06</span>並列実行 —<span class="cls">ParallelRunner</span></h2>
 
       <div class="block">
         <div class="block-bar"><span class="block-tag">python</span><button class="copy" type="button">copy</button></div>
@@ -880,9 +1087,9 @@ results = ParallelRunner(n_jobs=2).run(jobs)   # GPU が複数あれば自動で
       </p>
     </section>
 
-    <!-- ============================================ 06 -->
+    <!-- ============================================ 07 -->
     <section class="sec" id="ase">
-      <h2><span class="n">06</span>ASE ベースの実行 —<span class="cls">ASEMDRunner</span></h2>
+      <h2><span class="n">07</span>ASE ベースの実行 —<span class="cls">ASEMDRunner</span></h2>
 
       <p class="prose">3 つのバックエンドを同じ API で切り替えられる。</p>
 
@@ -935,6 +1142,59 @@ atoms.get_potential_energy()      # 全エネルギー
 atoms.get_potential_energies()    # per-atom エネルギー</code></pre>
       </div>
 
+      <h3><span class="n">7.1</span>積分器と時定数 (taut / taup / pfactor)</h3>
+
+      <p class="prose">
+        <code>ensemble</code> で ASE 側の積分器を選ぶ。時定数はすべて <strong>fs</strong> で指定する。
+      </p>
+
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr><th><code>ensemble</code></th><th>ASE のクラス</th><th>調整できる時定数</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>nve</code></td><td><code>VelocityVerlet</code></td><td>—</td></tr>
+            <tr><td><code>nvt</code> (既定)</td><td><code>Langevin</code></td><td><code>friction</code> [1/fs]</td></tr>
+            <tr><td><code>nvt_berendsen</code></td><td><code>NVTBerendsen</code></td><td><code>taut</code></td></tr>
+            <tr><td><code>nvt_bussi</code></td><td><code>Bussi</code></td><td><code>taut</code></td></tr>
+            <tr><td><code>nvt_nose_hoover</code></td><td><code>MelchionnaNPT</code> (barostat なし)</td><td><code>ttime</code></td></tr>
+            <tr><td><code>npt</code> = <code>npt_berendsen</code></td><td><code>NPTBerendsen</code></td><td><code>taut</code>, <code>taup</code>, <code>bulk_modulus_GPa</code></td></tr>
+            <tr><td><code>npt_inhomogeneous</code></td><td><code>Inhomogeneous_NPTBerendsen</code></td><td>同上 + <code>npt_axes</code></td></tr>
+            <tr><td><code>npt_parrinello_rahman</code></td><td><code>MelchionnaNPT</code></td><td><code>ttime</code>, <code>ptime</code>, <code>pfactor</code>, <code>npt_axes</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="block">
+        <div class="block-bar"><span class="block-tag">python</span><button class="copy" type="button">copy</button></div>
+<pre><code class="language-python">runner.run_md(ensemble="nvt_berendsen", temperature=300, taut=200, steps=5000)
+
+runner.run_md(ensemble="npt", temperature=300, pressure_GPa=0.0,
+              taut=100, taup=1000, bulk_modulus_GPa=140, steps=5000)
+
+# Parrinello-Rahman で c 軸だけ動かす
+runner.run_md(ensemble="npt_parrinello_rahman", temperature=300,
+              ttime=50, ptime=2000, bulk_modulus_GPa=140,
+              npt_axes=("z",), steps=5000)
+
+dyn = runner.make_dynamics(ensemble="npt", temperature=300, taut=150)  # 積分器だけ取り出す</code></pre>
+      </div>
+
+      <ul class="prose">
+        <li><code>pfactor</code> は <code>ptime**2 * bulk_modulus</code> として組み立てる
+          (<code>pfactor=</code> を直接渡せばそちらが優先)。</li>
+        <li>Berendsen の圧縮率は <code>compressibility_au = 1 / bulk_modulus_GPa</code>。
+          既定値は 100 GPa (固体向け)。</li>
+        <li><code>npt_axes</code> は ASE の <code>mask</code> に変換される。
+          <code>('x','y','z')</code> なら 3 軸独立、<code>('z',)</code> なら c 軸のみ、
+          <code>('xy',)</code> のように剪断成分も指定できる。</li>
+        <li>ASE の <code>MelchionnaNPT</code> は三角行列のセルしか扱えないので、
+          そうでない場合は自動的に標準形へ回転する (原子の相対配置は不変、警告つき)。</li>
+        <li>NEP 以外の calculator は <code>ASEMDRunner(atoms, calculator=EMT(), ...)</code>
+          のように注入できる。</li>
+      </ul>
+
       <div class="note info">
         <span class="note-tag">NEP_CPU / pyNEP への切り替え</span>
         <p>
@@ -962,9 +1222,9 @@ atoms.get_potential_energies()    # per-atom エネルギー</code></pre>
       </div>
     </section>
 
-    <!-- ============================================ 07 -->
+    <!-- ============================================ 08 -->
     <section class="sec" id="dpmd">
-      <h2><span class="n">07</span>DPMD の example と予実 —<span class="cls">DPMDExample</span></h2>
+      <h2><span class="n">08</span>DPMD の example と予実 —<span class="cls">DPMDExample</span></h2>
 
       <p class="prose">
         題材は GPUMD 公式 example <code>14_DP/water_msd</code>
@@ -1049,9 +1309,9 @@ print(report.to_markdown())</code></pre>
       </div>
     </section>
 
-    <!-- ============================================ 08 -->
+    <!-- ============================================ 09 -->
     <section class="sec" id="cli">
-      <h2><span class="n">08</span>コマンドラインスクリプト</h2>
+      <h2><span class="n">09</span>コマンドラインスクリプト</h2>
 
       <div class="block">
         <div class="block-bar"><span class="block-tag">共通の前置き</span><button class="copy" type="button">copy</button></div>
@@ -1082,7 +1342,37 @@ python scripts/run_md.py POSCAR -p $NEP -o runs/npt --orthorhombic \
     --ensemble npt --temperature 500 --pressure 0 --steps 10000
 
 # 入力だけ作って中身を確認
-python scripts/run_md.py POSCAR -p $NEP -o runs/check --dry-run</code></pre>
+python scripts/run_md.py POSCAR -p $NEP -o runs/check --dry-run
+
+# 熱浴・圧浴の時定数を fs で指定
+python scripts/run_md.py POSCAR -p $NEP -o runs/npt \
+    --ensemble npt --temperature 500 --tau-t 100 --tau-p 1000
+
+# c 軸だけ動かす NPT
+python scripts/run_md.py POSCAR -p $NEP -o runs/npt_z \
+    --ensemble npt --temperature 500 --free-axes z
+
+# 三斜晶セルを 6 成分指定でフルに緩和 (--cell-mode を省略しても自動で tri になる)
+python scripts/run_md.py structure.cif -p $NEP -o runs/npt_tri \
+    --ensemble npt --temperature 500 --cell-mode tri
+
+# npt_mttk で x 方向にだけ 5 GPa
+python scripts/run_md.py POSCAR -p $NEP -o runs/uniaxial \
+    --ensemble npt --barostat npt_mttk --mttk-direction x --pressure 5
+
+# NPH (熱浴なし)
+python scripts/run_md.py POSCAR -p $NEP -o runs/nph --ensemble nph --pressure 0</code></pre>
+      </div>
+
+      <h3>構造の変換・ベンチマーク — <code>convert_structure.py</code></h3>
+
+      <div class="block">
+        <div class="block-bar"><span class="block-tag">bash</span><button class="copy" type="button">copy</button></div>
+<pre><code class="language-bash">python scripts/convert_structure.py big.cif                # cif2xyz
+python scripts/convert_structure.py POSCAR -o model.xyz    # POSCAR2xyz
+python scripts/convert_structure.py structures/*.cif --outdir xyz/
+python scripts/convert_structure.py big.cif --benchmark
+python scripts/convert_structure.py --clear-cache</code></pre>
       </div>
 
       <h3>結果解析 — <code>analyze_results.py</code></h3>
@@ -1108,7 +1398,16 @@ python scripts/run_dpmd_example.py -o runs/dpmd_water --dp-setting dp.txt --dp-m
       <div class="block">
         <div class="block-bar"><span class="block-tag">bash</span><button class="copy" type="button">copy</button></div>
 <pre><code class="language-bash">python scripts/run_ase_demo.py POSCAR -p $NEP -o runs/ase --backend cpu \
-    --relax --relax-cell --md --steps 2000 --temperature 300 --convert xdatcar</code></pre>
+    --relax --relax-cell --md --steps 2000 --temperature 300 --convert xdatcar
+
+# 熱浴の時定数を変える
+python scripts/run_ase_demo.py POSCAR -p $NEP -o runs/ase_nvt \
+    --md --ensemble nvt_berendsen --taut 200 --steps 2000
+
+# Parrinello-Rahman NPT で c 軸だけ動かす
+python scripts/run_ase_demo.py POSCAR -p $NEP -o runs/ase_npt \
+    --md --ensemble npt_parrinello_rahman --pressure 0 \
+    --ttime 50 --ptime 2000 --bulk-modulus 140 --npt-axes z</code></pre>
       </div>
 
       <h3>環境確認 — <code>check_environment.py</code></h3>
@@ -1128,9 +1427,9 @@ python scripts/check_environment.py --json   # 機械可読</code></pre>
       </div>
     </section>
 
-    <!-- ============================================ 09 -->
+    <!-- ============================================ 10 -->
     <section class="sec" id="tests">
-      <h2><span class="n">09</span>テスト</h2>
+      <h2><span class="n">10</span>テスト</h2>
 
       <div class="block">
         <div class="block-bar"><span class="block-tag">bash</span><button class="copy" type="button">copy</button></div>
@@ -1140,18 +1439,45 @@ python -m pytest tests/ -v</code></pre>
 
       <p class="prose">
         <code>gpumd</code> が見つからない環境では GPUMD 実行を伴うテストは自動 skip される。
-        現環境では 27 件すべて通る。
+        現環境では 69 件すべて通る。
       </p>
     </section>
 
-    <!-- ============================================ 10 -->
+    <!-- ============================================ 11 -->
     <section class="sec" id="design">
-      <h2><span class="n">10</span>設計メモ</h2>
+      <h2><span class="n">11</span>設計メモ</h2>
 
       <ul class="prose">
         <li>
+          <strong>構造の読み込み</strong>は <code>fastio</code> の高速経路が既定。
+          POSCAR / extxyz は numpy だけの専用パーサ、CIF は pymatgen、それ以外は ASE。
+          遅い形式は extxyz に変換してキャッシュする。<code>fast=False</code> で
+          いつでも ASE 経由に戻せる。
+        </li>
+        <li>
           <strong>入力生成</strong>は calorine (<code>calorine.gpumd.write_xyz</code>) を使用。
           ASE の extxyz ライタは速度の単位換算 (ASE 単位 ↔ Å/fs) をしないため。
+          (<code>fastio.write_xyz_fast</code> は単位換算込みの軽量ライタで、
+          <code>StructureHandler.write_model(..., fast=True)</code> から使える。)
+        </li>
+        <li>
+          <strong>時定数</strong>は GPUMD が τ/Δt という無次元量を取るので、
+          <code>tau_T</code> / <code>tau_p</code> (fs) は <code>RunInputBuilder</code> /
+          <code>MDStage</code> の <code>time_step</code> を見て換算する。
+          ステージごとに刻みを変えた場合はそのステージの刻みを使う。
+        </li>
+        <li>
+          <strong>NPT の軸固定</strong>は <code>npt_ber</code> / <code>npt_scr</code> では
+          弾性率 &gt; 2000 GPa、<code>npt_mttk</code> では <code>direction</code> の指定で
+          実現する。どちらも GPUMD 本体の仕様
+          (<code>src/integrate/integrate.cu</code>,
+          <code>doc/gpumd/input_parameters/ensemble_*.rst</code>) に沿ったもので、
+          ツールキット側で積分器に手を入れているわけではない。
+        </li>
+        <li>
+          <strong>セルの厚み</strong>は <code>volume / 面積</code> で評価する
+          (GPUMD の <code>Box::thickness_*</code> と同じ定義)。
+          スーパーセルの判定も辺長ではなくこちらで行う。
         </li>
         <li>
           <strong>実行</strong>は <code>subprocess</code> +

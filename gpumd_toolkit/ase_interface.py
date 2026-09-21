@@ -19,7 +19,7 @@ import shutil
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 import numpy as np
 from ase import Atoms, units
@@ -31,12 +31,62 @@ from .structure import DEFAULT_MAX_ATOMS, StructureHandler
 __all__ = [
     "create_nep_calculator",
     "available_backends",
+    "axes_to_mask",
     "CPUNEPWithEnergies",
     "GPUNEPWithEnergies",
     "ASEMDRunner",
 ]
 
 BACKENDS = ("cpu", "pynep", "gpu")
+
+#: ASE の NPT で使える軸名 -> mask のインデックス
+_AXIS_INDEX = {"x": 0, "y": 1, "z": 2}
+
+
+def axes_to_mask(axes: Sequence[str]) -> np.ndarray:
+    """``('x', 'z')`` のような軸指定を ASE の NPT ``mask`` に変換する。
+
+    指定した軸だけがセル変調の対象になり、他は固定される。
+    ``'xy'`` のような剪断成分を含めると 3x3 の mask を返す。
+    """
+    labels = [str(a).strip().lower() for a in axes]
+    if any(len(label) == 2 for label in labels):
+        mask = np.zeros((3, 3), dtype=int)
+        for label in labels:
+            if len(label) == 1:
+                index = _AXIS_INDEX[label]
+                mask[index, index] = 1
+            else:
+                i, j = _AXIS_INDEX[label[0]], _AXIS_INDEX[label[1]]
+                mask[i, j] = mask[j, i] = 1
+        return mask
+    mask = np.zeros(3, dtype=int)
+    for label in labels:
+        if label not in _AXIS_INDEX:
+            raise ValueError(f"未知の軸名 '{label}'。'x' / 'y' / 'z' から選びます。")
+        mask[_AXIS_INDEX[label]] = 1
+    return mask
+
+
+def _hydrostatic(pressure: float | Sequence[float]) -> float:
+    """静水圧 [GPa] を取り出す (3/6 成分なら対角の平均)。"""
+    if isinstance(pressure, (int, float)):
+        return float(pressure)
+    values = [float(p) for p in pressure]
+    return sum(values[:3]) / min(3, len(values))
+
+
+def _stress_vector(pressure: float | Sequence[float]) -> np.ndarray:
+    """圧力 [GPa] を ASE の 6 成分 (Voigt) 応力ベクトルに直す。"""
+    if isinstance(pressure, (int, float)):
+        return np.array([pressure] * 3 + [0.0] * 3, dtype=float)
+    values = [float(p) for p in pressure]
+    if len(values) == 3:
+        return np.array(values + [0.0] * 3, dtype=float)
+    if len(values) == 6:
+        # GPUMD 並び (xx, yy, zz, yz, xz, xy) は ASE の Voigt 並びと同じ
+        return np.array(values, dtype=float)
+    raise ValueError("pressure_GPa はスカラー / 3 成分 / 6 成分のいずれかです。")
 
 
 # --------------------------------------------------------------------- calculators
@@ -226,28 +276,35 @@ class ASEMDRunner:
     """
 
     atoms: Atoms | Path | str
-    model: Path | str
+    model: Path | str | None = None
     backend: str = "auto"
     workdir: Path | str = "ase_run"
     max_atoms: int = DEFAULT_MAX_ATOMS
     environment: GPUMDEnvironment | None = None
     calculator_kwargs: dict = field(default_factory=dict)
+    #: NEP の代わりに使う ASE calculator (テストや他ポテンシャルとの比較用)
+    calculator: Calculator | None = None
+    #: 構造読み込みで高速経路 (専用パーサ + xyz キャッシュ) を使うか
+    fast_read: bool = True
 
     def __post_init__(self) -> None:
         if not isinstance(self.atoms, Atoms):
-            self.atoms = StructureHandler.read(self.atoms)
+            self.atoms = StructureHandler.read(self.atoms, fast=self.fast_read)
         else:
             self.atoms = self.atoms.copy()
         StructureHandler.check_size(self.atoms, max_atoms=self.max_atoms)
         self.workdir = Path(self.workdir).expanduser().resolve()
         self.workdir.mkdir(parents=True, exist_ok=True)
-        self.calculator = create_nep_calculator(
-            self.model,
-            backend=self.backend,
-            atoms=self.atoms,
-            environment=self.environment,
-            **self.calculator_kwargs,
-        )
+        if self.calculator is None:
+            if self.model is None:
+                raise ValueError("model か calculator のどちらかが必要です。")
+            self.calculator = create_nep_calculator(
+                self.model,
+                backend=self.backend,
+                atoms=self.atoms,
+                environment=self.environment,
+                **self.calculator_kwargs,
+            )
         self.atoms.calc = self.calculator
         self.log: list[dict[str, float]] = []
 
@@ -301,56 +358,78 @@ class ASEMDRunner:
         return self.atoms
 
     # ------------------------------------------------------------------ MD
-    def run_md(
+    def make_dynamics(
         self,
         *,
         ensemble: str = "nvt",
         temperature: float = 300.0,
-        temperature_end: float | None = None,
-        steps: int = 1000,
         time_step: float = 1.0,
         friction: float = 0.01,
-        pressure_GPa: float = 0.0,
+        pressure_GPa: float | Sequence[float] = 0.0,
+        taut: float = 100.0,
+        taup: float = 1000.0,
         ttime: float = 25.0,
-        pfactor: float = 2e6,
-        log_interval: int = 10,
+        ptime: float = 1000.0,
+        pfactor: float | None = None,
+        bulk_modulus_GPa: float = 100.0,
+        compressibility_au: float | None = None,
+        npt_axes: Sequence[str] | None = None,
+        mask: Sequence[int] | np.ndarray | None = None,
         trajectory: str | None = "md.traj",
         seed: int | None = None,
-        initialize_velocities: bool = True,
-    ) -> Atoms:
-        """ASE の積分器で MD を回す。
+    ):
+        """ASE の積分器 (dynamics) を組み立てて返す。
+
+        時定数はすべて **fs** で指定する (mission.md 追加依頼 20260921-2)。
 
         Parameters
         ----------
         ensemble
-            ``'nve'`` / ``'nvt'`` (Langevin) / ``'nvt_nose_hoover'`` / ``'npt'``。
-        temperature, temperature_end
-            目標温度 [K]。``temperature_end`` を与えると線形に昇温/降温する。
-        time_step
-            時間刻み [fs]。
+            ``'nve'``
+            / ``'nvt'`` (Langevin) / ``'nvt_berendsen'`` / ``'nvt_bussi'``
+            / ``'nvt_nose_hoover'``
+            / ``'npt'`` = ``'npt_berendsen'`` / ``'npt_inhomogeneous'``
+            / ``'npt_parrinello_rahman'`` (= ``'npt_mttk'``)
         friction
             Langevin の摩擦係数 [1/fs]。
-        pressure_GPa
-            NPT の目標圧力 [GPa]。
+        taut, taup
+            Berendsen 系の温度 / 圧力の時定数 [fs] (ASE の ``taut`` / ``taup``)。
+        ttime, ptime
+            Nose-Hoover / Parrinello-Rahman の特性時間 [fs]。
+            ``pfactor = ptime**2 * bulk_modulus`` として ASE の ``pfactor``
+            を組み立てる (``pfactor`` を直接与えればそちらが優先)。
+        bulk_modulus_GPa
+            体積弾性率の概算値 [GPa]。``pfactor`` と Berendsen の
+            圧縮率 (``compressibility_au = 1/B``) に使う。
+        npt_axes, mask
+            セルのどの方向を動かすか (追加依頼 20260921-4)。
+            ``npt_axes=('z',)`` なら c 軸だけ、``('x','y','z')`` なら 3 軸独立。
+            ``mask`` を直接 ASE の形式で渡すこともできる。
         """
+        from ase.md.bussi import Bussi
         from ase.md.langevin import Langevin
-        from ase.md.npt import NPT
-        from ase.md.nptberendsen import NPTBerendsen
-        from ase.md.velocitydistribution import MaxwellBoltzmannDistribution, Stationary
+        from ase.md.nptberendsen import Inhomogeneous_NPTBerendsen, NPTBerendsen
+        from ase.md.nvtberendsen import NVTBerendsen
         from ase.md.verlet import VelocityVerlet
 
-        if initialize_velocities:
-            rng = np.random.default_rng(seed)
-            MaxwellBoltzmannDistribution(self.atoms, temperature_K=temperature, rng=rng)
-            Stationary(self.atoms)
+        try:  # ase >= 3.29 では NPT -> MelchionnaNPT にリネームされている
+            from ase.md.melchionna import MelchionnaNPT as NPT
+        except ImportError:
+            from ase.md.npt import NPT
 
         dt = time_step * units.fs
         traj_path = str(self.workdir / trajectory) if trajectory else None
+        if mask is None and npt_axes is not None:
+            mask = axes_to_mask(npt_axes)
+        if compressibility_au is None:
+            compressibility_au = 1.0 / (bulk_modulus_GPa * units.GPa)
+        if pfactor is None:
+            pfactor = (ptime * units.fs) ** 2 * bulk_modulus_GPa * units.GPa
 
         if ensemble == "nve":
-            dyn = VelocityVerlet(self.atoms, dt, trajectory=traj_path)
-        elif ensemble == "nvt":
-            dyn = Langevin(
+            return VelocityVerlet(self.atoms, dt, trajectory=traj_path)
+        if ensemble == "nvt":
+            return Langevin(
                 self.atoms,
                 dt,
                 temperature_K=temperature,
@@ -358,8 +437,26 @@ class ASEMDRunner:
                 trajectory=traj_path,
                 rng=np.random.default_rng(seed),
             )
-        elif ensemble == "nvt_nose_hoover":
-            dyn = NPT(
+        if ensemble == "nvt_berendsen":
+            return NVTBerendsen(
+                self.atoms,
+                dt,
+                temperature_K=temperature,
+                taut=taut * units.fs,
+                trajectory=traj_path,
+            )
+        if ensemble == "nvt_bussi":
+            return Bussi(
+                self.atoms,
+                dt,
+                temperature_K=temperature,
+                taut=taut * units.fs,
+                rng=np.random.default_rng(seed),
+                trajectory=traj_path,
+            )
+        if ensemble == "nvt_nose_hoover":
+            self._require_triangular_cell()
+            return NPT(
                 self.atoms,
                 dt,
                 temperature_K=temperature,
@@ -368,21 +465,123 @@ class ASEMDRunner:
                 pfactor=None,
                 trajectory=traj_path,
             )
-        elif ensemble == "npt":
-            dyn = NPTBerendsen(
+        if ensemble in ("npt", "npt_berendsen"):
+            return NPTBerendsen(
                 self.atoms,
                 dt,
                 temperature_K=temperature,
-                pressure_au=pressure_GPa * units.GPa,
-                taut=100 * units.fs,
-                taup=1000 * units.fs,
-                compressibility_au=4.57e-5 / units.bar,
+                pressure_au=_hydrostatic(pressure_GPa) * units.GPa,
+                taut=taut * units.fs,
+                taup=taup * units.fs,
+                compressibility_au=compressibility_au,
                 trajectory=traj_path,
             )
-        else:
-            raise ValueError(
-                "ensemble は 'nve' / 'nvt' / 'nvt_nose_hoover' / 'npt' から選びます。"
+        if ensemble == "npt_inhomogeneous":
+            return Inhomogeneous_NPTBerendsen(
+                self.atoms,
+                dt,
+                temperature_K=temperature,
+                pressure_au=_hydrostatic(pressure_GPa) * units.GPa,
+                taut=taut * units.fs,
+                taup=taup * units.fs,
+                compressibility_au=compressibility_au,
+                mask=tuple(mask) if mask is not None else (1, 1, 1),
+                trajectory=traj_path,
             )
+        if ensemble in ("npt_parrinello_rahman", "npt_mttk"):
+            self._require_triangular_cell()
+            return NPT(
+                self.atoms,
+                dt,
+                temperature_K=temperature,
+                # ASE の externalstress は「応力」なので圧力とは符号が逆
+                externalstress=-_stress_vector(pressure_GPa) * units.GPa,
+                ttime=ttime * units.fs,
+                pfactor=pfactor,
+                mask=np.asarray(mask) if mask is not None else None,
+                trajectory=traj_path,
+            )
+        raise ValueError(
+            "ensemble は 'nve' / 'nvt' / 'nvt_berendsen' / 'nvt_bussi' /"
+            " 'nvt_nose_hoover' / 'npt' / 'npt_inhomogeneous' /"
+            " 'npt_parrinello_rahman' から選びます。"
+        )
+
+    def _require_triangular_cell(self) -> None:
+        """ASE の ``NPT`` が扱える三角行列のセルにする。
+
+        ASE の判定は ``m[1,0] == m[2,0] == m[2,1] == 0.0`` という**厳密な比較**
+        なので、CIF 往復などで残った 1e-16 のゴミでも弾かれる。まず丸め誤差を
+        落とし、それでも三角行列でなければ標準形へ剛体回転する。
+        """
+        cleaned = StructureHandler.clean_cell(self.atoms)
+        rotated_needed = not StructureHandler.is_triangular(cleaned, tol=0.0)
+        if rotated_needed:
+            cleaned = StructureHandler.clean_cell(
+                StructureHandler.to_standard_cell(cleaned)
+            )
+        self.atoms.set_cell(cleaned.cell)
+        self.atoms.set_positions(cleaned.get_positions())
+        velocities = cleaned.get_velocities()
+        if velocities is not None:
+            self.atoms.set_velocities(velocities)
+        if rotated_needed:
+            warnings.warn(
+                "ASE の NPT は三角行列のセルしか扱えないため、セルを標準形へ回転しました"
+                " (原子の相対配置は不変)。",
+                RuntimeWarning,
+            )
+
+    def run_md(
+        self,
+        *,
+        ensemble: str = "nvt",
+        temperature: float = 300.0,
+        temperature_end: float | None = None,
+        steps: int = 1000,
+        time_step: float = 1.0,
+        log_interval: int = 10,
+        trajectory: str | None = "md.traj",
+        seed: int | None = None,
+        initialize_velocities: bool = True,
+        **dynamics_kwargs,
+    ) -> Atoms:
+        """ASE の積分器で MD を回す。
+
+        ``ensemble`` や熱浴・圧浴の時定数 (``taut`` / ``taup`` / ``ttime`` /
+        ``ptime`` / ``pfactor``)、変調する軸 (``npt_axes``) は
+        :meth:`make_dynamics` に渡される。
+
+        Parameters
+        ----------
+        temperature, temperature_end
+            目標温度 [K]。``temperature_end`` を与えると線形に昇温/降温する。
+        time_step
+            時間刻み [fs]。
+
+        Examples
+        --------
+        >>> runner.run_md(ensemble="nvt_berendsen", temperature=300, taut=200)
+        >>> runner.run_md(ensemble="npt", temperature=300, pressure_GPa=0.0,
+        ...               taut=100, taup=1000, bulk_modulus_GPa=140)
+        >>> runner.run_md(ensemble="npt_parrinello_rahman", temperature=300,
+        ...               ptime=2000, npt_axes=("z",))   # c 軸だけ動かす
+        """
+        from ase.md.velocitydistribution import MaxwellBoltzmannDistribution, Stationary
+
+        if initialize_velocities:
+            rng = np.random.default_rng(seed)
+            MaxwellBoltzmannDistribution(self.atoms, temperature_K=temperature, rng=rng)
+            Stationary(self.atoms)
+
+        dyn = self.make_dynamics(
+            ensemble=ensemble,
+            temperature=temperature,
+            time_step=time_step,
+            trajectory=trajectory,
+            seed=seed,
+            **dynamics_kwargs,
+        )
 
         self.log = []
         n_atoms = len(self.atoms)

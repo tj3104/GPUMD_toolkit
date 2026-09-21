@@ -12,6 +12,7 @@
 補助
 ----
 :class:`~gpumd_toolkit.structure.StructureHandler`   POSCAR / CIF などの入出力
+:mod:`~gpumd_toolkit.fastio`                        構造ファイルの高速読み込み
 :class:`~gpumd_toolkit.profiles.TemperatureProfile`  温度プロファイル
 :class:`~gpumd_toolkit.trajectory.TrajectoryConverter` XDATCAR / traj への変換
 :class:`~gpumd_toolkit.analysis.MDAnalyzer`          thermo.out の解析と作図
@@ -24,9 +25,22 @@ from __future__ import annotations
 __version__ = "0.1.0"
 
 from .analysis import MDAnalyzer, ThermoData, compare_runs
-from .ase_interface import ASEMDRunner, available_backends, create_nep_calculator
+from .ase_interface import (
+    ASEMDRunner,
+    available_backends,
+    axes_to_mask,
+    create_nep_calculator,
+)
 from .config import GPUMDEnvironment
 from .diagnostics import environment_report, format_report
+from .fastio import (
+    benchmark_readers,
+    cif_to_xyz,
+    clear_cache,
+    convert_to_xyz,
+    poscar_to_xyz,
+    read_fast,
+)
 from .inputs import DumpSettings, MDStage, RunInputBuilder
 from .md import GPUMDCalculation, GPUMDResult
 from .parallel import JobSpec, ParallelRunner
@@ -55,10 +69,17 @@ __all__ = [
     "TrajectoryConverter",
     "ValidationReport",
     "available_backends",
+    "axes_to_mask",
+    "benchmark_readers",
+    "cif_to_xyz",
+    "clear_cache",
     "compare_runs",
+    "convert_to_xyz",
     "create_nep_calculator",
     "environment_report",
     "format_report",
+    "poscar_to_xyz",
+    "read_fast",
 ]
 
 
