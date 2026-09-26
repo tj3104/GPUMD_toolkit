@@ -302,6 +302,13 @@ class MonteCarloCalculation(GPUMDCalculation):
             stage_kwargs=stage_kwargs,
         )
 
+    def run(self, *, analyze: bool = False, **kwargs):
+        """実行する。``analyze=True`` なら ``analysis/`` に加えて ``mcmd.png`` も描く。"""
+        result = super().run(analyze=analyze, **kwargs)
+        if analyze and result.succeeded and (self.workdir / "mcmd.out").is_file():
+            self.plot_mcmd(str(Path("analysis") / "mcmd.png"))
+        return result
+
     # ------------------------------------------------------------------ 結果
     def mcmd(self) -> pd.DataFrame:
         """``mcmd.out`` を読む (ステップ・受理率・各元素の濃度)。"""
@@ -343,13 +350,15 @@ class MonteCarloCalculation(GPUMDCalculation):
 
         frame = self.mcmd()
         columns = [c for c in frame.columns if c.startswith("c_")]
+        # MD ステップは run ごとにリセットされ、MCMC では時間も進まないので
+        # 累積 MC 試行回数を横軸にする
         figure, axes = plt.subplots(2, 1, figsize=(7, 6), sharex=True)
-        axes[0].plot(frame["step"], frame["acceptance"], lw=1.0)
+        axes[0].plot(frame["mc_trials"], frame["acceptance"], lw=1.0)
         axes[0].set_ylabel(label("MC 受理率"))
         axes[0].set_ylim(0, 1)
         for column in columns:
-            axes[1].plot(frame["step"], frame[column], lw=1.2, label=column[2:])
-        axes[1].set_xlabel(label("MD ステップ"))
+            axes[1].plot(frame["mc_trials"], frame[column], lw=1.2, label=column[2:])
+        axes[1].set_xlabel(label("MC 試行回数"))
         axes[1].set_ylabel(label("濃度"))
         if columns:
             axes[1].legend(fontsize=8)

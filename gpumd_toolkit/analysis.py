@@ -52,6 +52,20 @@ class StageSpec:
     T_start: float | None
     T_end: float | None
     label: str
+    #: ``mc`` 行の ``<N_md> <N_mc>`` (N_md ステップごとに N_mc 回の MC 試行)
+    mc_md_steps: int | None = None
+    mc_trials: int | None = None
+
+    @property
+    def is_mcmc(self) -> bool:
+        """``time_step 0`` で MC だけを回すステージか。"""
+        return self.time_step == 0 and bool(self.mc_trials)
+
+    def mc_trials_at(self, local_steps: np.ndarray) -> np.ndarray:
+        """ステージ先頭から ``local_steps`` ステップまでの累積 MC 試行数。"""
+        if not self.mc_md_steps or not self.mc_trials:
+            return np.zeros_like(local_steps)
+        return (local_steps // self.mc_md_steps) * self.mc_trials
 
     @property
     def n_thermo_rows(self) -> int:
@@ -75,6 +89,7 @@ class RunSpec:
         time_step = 1.0
         potential = ""
         thermo_interval: int | None = None
+        mc: tuple[int, int] | None = None
         stages: list[StageSpec] = []
         pending: dict | None = None
 
@@ -90,6 +105,12 @@ class RunSpec:
                 time_step = float(tokens[1])
             elif key == "dump_thermo":
                 thermo_interval = int(tokens[1])
+            elif key == "mc" and len(tokens) >= 4:
+                # mc <canonical|sgc|vcsgc> <N_md> <N_mc> ...
+                try:
+                    mc = (int(tokens[2]), int(tokens[3]))
+                except ValueError:
+                    mc = None
             elif key == "ensemble":
                 pending = _parse_ensemble(tokens[1:])
             elif key == "run":
@@ -105,15 +126,24 @@ class RunSpec:
                         T_start=info["T_start"],
                         T_end=info["T_end"],
                         label=f"{len(stages) + 1}:{info['ensemble']}",
+                        mc_md_steps=mc[0] if mc else None,
+                        mc_trials=mc[1] if mc else None,
                     )
                 )
-                # dump 系は propagating ではないので run ごとにリセットされる
+                # dump 系・mc は propagating ではないので run ごとにリセットされる
                 thermo_interval = None
+                mc = None
         return cls(path=path, potential=potential, time_step=time_step, stages=stages)
 
     @property
     def total_steps(self) -> int:
         return sum(s.steps for s in self.stages)
+
+    @property
+    def is_mcmc(self) -> bool:
+        """thermo を書く全ステージが MCMC (``time_step 0`` + ``mc``) か。"""
+        sampled = [s for s in self.stages if s.n_thermo_rows]
+        return bool(sampled) and all(s.is_mcmc for s in sampled)
 
 
 #: ``ensemble <name> <T_1> <T_2> ...`` の形をとるアンサンブル
@@ -315,6 +345,7 @@ def _augment(frame: pd.DataFrame, *, n_atoms: int, run_spec: RunSpec | None) -> 
     # 時間軸・ステージ・目標温度を run.in から復元する
     times = np.zeros(len(frame))
     steps = np.zeros(len(frame), dtype=int)
+    trials = np.zeros(len(frame), dtype=int)
     stage_ids = np.zeros(len(frame), dtype=int)
     labels = np.empty(len(frame), dtype=object)
     ensembles = np.empty(len(frame), dtype=object)
@@ -324,17 +355,21 @@ def _augment(frame: pd.DataFrame, *, n_atoms: int, run_spec: RunSpec | None) -> 
         row = 0
         t0 = 0.0
         step0 = 0
+        trial0 = 0
         for stage in run_spec.stages:
             n_rows = stage.n_thermo_rows
+            stage_trials = int(stage.mc_trials_at(np.array(stage.steps)))
             if n_rows == 0:
                 t0 += stage.steps * stage.time_step * 1e-3
                 step0 += stage.steps
+                trial0 += stage_trials
                 continue
             end = min(row + n_rows, len(frame))
             k = np.arange(1, end - row + 1)
             local_steps = k * (stage.thermo_interval or 1)
             times[row:end] = t0 + local_steps * stage.time_step * 1e-3
             steps[row:end] = step0 + local_steps
+            trials[row:end] = trial0 + stage.mc_trials_at(local_steps)
             stage_ids[row:end] = stage.index
             labels[row:end] = stage.label
             ensembles[row:end] = stage.ensemble
@@ -344,11 +379,14 @@ def _augment(frame: pd.DataFrame, *, n_atoms: int, run_spec: RunSpec | None) -> 
             row = end
             t0 += stage.steps * stage.time_step * 1e-3
             step0 += stage.steps
+            trial0 += stage_trials
             if row >= len(frame):
                 break
         if row < len(frame):  # run.in と行数が合わない場合は末尾を外挿
             dt = times[row - 1] - times[row - 2] if row >= 2 else 1.0
             times[row:] = times[row - 1] + dt * np.arange(1, len(frame) - row + 1)
+            dtrial = trials[row - 1] - trials[row - 2] if row >= 2 else 0
+            trials[row:] = trials[row - 1] + dtrial * np.arange(1, len(frame) - row + 1)
             stage_ids[row:] = stage_ids[row - 1]
             labels[row:] = labels[row - 1]
             ensembles[row:] = ensembles[row - 1]
@@ -360,6 +398,7 @@ def _augment(frame: pd.DataFrame, *, n_atoms: int, run_spec: RunSpec | None) -> 
 
     frame["time_ps"] = times
     frame["step"] = steps
+    frame["mc_trials"] = trials
     frame["stage"] = stage_ids
     frame["label"] = labels
     frame["ensemble"] = ensembles
@@ -389,6 +428,20 @@ class MDAnalyzer:
             raise NotADirectoryError(f"{self.directory} はディレクトリではありません。")
         self.thermo = ThermoData.from_directory(self.directory, n_atoms=n_atoms)
         self.output_dir = Path(output_dir) if output_dir else self.directory / "analysis"
+
+    @property
+    def x_axis(self) -> tuple[str, str]:
+        """時系列プロットの横軸 (列名, ラベル)。
+
+        MCMC (``time_step 0``) だけの計算では時間が進まないので MC 試行回数、
+        MD と MCMC が混在する場合は MD ステップ数を横軸にする。
+        """
+        spec = self.thermo.run_spec
+        if spec is not None and spec.is_mcmc:
+            return "mc_trials", "MC trials"
+        if spec is not None and any(s.time_step == 0 and s.n_thermo_rows for s in spec.stages):
+            return "step", "step"
+        return "time_ps", "time (ps)"
 
     # ------------------------------------------------------------------ 補助出力
     def read_table(self, filename: str, columns: Sequence[str] | None = None) -> pd.DataFrame:
@@ -483,7 +536,7 @@ class MDAnalyzer:
     # ------------------------------------------------------------- 個別プロット
     def _stage_marks(self, ax) -> None:
         frame = self.thermo.frame
-        boundaries = frame["time_ps"][frame["stage"].diff().fillna(0) != 0]
+        boundaries = frame[self.x_axis[0]][frame["stage"].diff().fillna(0) != 0]
         for t in boundaries:
             ax.axvline(t, color="0.7", lw=0.8, ls="--", zorder=0)
 
@@ -491,6 +544,7 @@ class MDAnalyzer:
         import matplotlib.pyplot as plt
 
         frame = self.thermo.frame
+        x, xlabel = self.x_axis
         fig, axes = plt.subplots(2, 2, figsize=(11, 7), sharex=True)
         specs = [
             (axes[0, 0], "temperature", "temperature (K)", "tab:red"),
@@ -499,13 +553,13 @@ class MDAnalyzer:
             (axes[1, 1], "volume_per_atom", "volume (Å$^3$/atom)", "tab:purple"),
         ]
         for ax, column, ylabel, color in specs:
-            ax.plot(frame["time_ps"], frame[column], lw=0.8, color=color)
+            ax.plot(frame[x], frame[column], lw=0.8, color=color)
             ax.set_ylabel(ylabel)
             ax.grid(alpha=0.3)
             self._stage_marks(ax)
         if frame["target_temperature"].notna().any():
             axes[0, 0].plot(
-                frame["time_ps"],
+                frame[x],
                 frame["target_temperature"],
                 lw=1.4,
                 ls="--",
@@ -514,7 +568,7 @@ class MDAnalyzer:
             )
             axes[0, 0].legend(fontsize=8)
         for ax in axes[1]:
-            ax.set_xlabel("time (ps)")
+            ax.set_xlabel(xlabel)
         fig.suptitle(f"GPUMD: {self.directory.name}  (N = {self.thermo.n_atoms})")
         fig.tight_layout()
         path = out / "overview.png"
@@ -526,11 +580,12 @@ class MDAnalyzer:
         import matplotlib.pyplot as plt
 
         frame = self.thermo.frame
+        x, xlabel = self.x_axis
         fig, ax = plt.subplots(figsize=(8, 4.2))
-        ax.plot(frame["time_ps"], frame["temperature"], lw=0.8, color="tab:red", label="instant")
+        ax.plot(frame[x], frame["temperature"], lw=0.8, color="tab:red", label="instant")
         window = max(1, len(frame) // 100)
         ax.plot(
-            frame["time_ps"],
+            frame[x],
             frame["temperature"].rolling(window, center=True, min_periods=1).mean(),
             lw=1.6,
             color="darkred",
@@ -538,11 +593,11 @@ class MDAnalyzer:
         )
         if frame["target_temperature"].notna().any():
             ax.plot(
-                frame["time_ps"], frame["target_temperature"], lw=1.4, ls="--", color="k",
+                frame[x], frame["target_temperature"], lw=1.4, ls="--", color="k",
                 label="target",
             )
         self._stage_marks(ax)
-        ax.set_xlabel("time (ps)")
+        ax.set_xlabel(xlabel)
         ax.set_ylabel("temperature (K)")
         ax.legend(fontsize=8)
         ax.grid(alpha=0.3)
@@ -556,18 +611,20 @@ class MDAnalyzer:
         import matplotlib.pyplot as plt
 
         frame = self.thermo.frame
+        x, xlabel = self.x_axis
         fig, axes = plt.subplots(2, 1, figsize=(8, 6), sharex=True)
-        axes[0].plot(frame["time_ps"], frame["potential_energy_per_atom"], lw=0.8,
+        axes[0].plot(frame[x], frame["potential_energy_per_atom"], lw=0.8,
                      color="tab:blue", label="potential")
         axes[0].set_ylabel("U (eV/atom)")
         axes[0].legend(fontsize=8)
         axes[0].grid(alpha=0.3)
-        axes[1].plot(frame["time_ps"], frame["total_energy_per_atom"], lw=0.8,
+        axes[1].plot(frame[x], frame["total_energy_per_atom"], lw=0.8,
                      color="tab:orange", label="total (K+U)")
         axes[1].set_ylabel("E$_{tot}$ (eV/atom)")
-        axes[1].set_xlabel("time (ps)")
+        axes[1].set_xlabel(xlabel)
         drift = self.thermo.energy_drift()
-        axes[1].set_title(f"energy drift = {drift:+.4f} meV/atom/ps", fontsize=9)
+        if np.isfinite(drift):
+            axes[1].set_title(f"energy drift = {drift:+.4f} meV/atom/ps", fontsize=9)
         axes[1].legend(fontsize=8)
         axes[1].grid(alpha=0.3)
         for ax in axes:
@@ -582,12 +639,13 @@ class MDAnalyzer:
         import matplotlib.pyplot as plt
 
         frame = self.thermo.frame
+        x, xlabel = self.x_axis
         fig, ax = plt.subplots(figsize=(8, 4.2))
         for column, color in (("Pxx", "tab:blue"), ("Pyy", "tab:green"), ("Pzz", "tab:red")):
-            ax.plot(frame["time_ps"], frame[column], lw=0.6, alpha=0.6, label=column)
-        ax.plot(frame["time_ps"], frame["pressure"], lw=1.5, color="k", label="hydrostatic")
+            ax.plot(frame[x], frame[column], lw=0.6, alpha=0.6, label=column)
+        ax.plot(frame[x], frame["pressure"], lw=1.5, color="k", label="hydrostatic")
         self._stage_marks(ax)
-        ax.set_xlabel("time (ps)")
+        ax.set_xlabel(xlabel)
         ax.set_ylabel("pressure (GPa)")
         ax.legend(fontsize=8, ncol=4)
         ax.grid(alpha=0.3)
@@ -601,15 +659,16 @@ class MDAnalyzer:
         import matplotlib.pyplot as plt
 
         frame = self.thermo.frame
+        x, xlabel = self.x_axis
         fig, axes = plt.subplots(2, 1, figsize=(8, 6), sharex=True)
         for column, color in (("a", "tab:blue"), ("b", "tab:green"), ("c", "tab:red")):
-            axes[0].plot(frame["time_ps"], frame[column], lw=1.0, color=color, label=column)
+            axes[0].plot(frame[x], frame[column], lw=1.0, color=color, label=column)
         axes[0].set_ylabel("cell length (Å)")
         axes[0].legend(fontsize=8)
         axes[0].grid(alpha=0.3)
-        axes[1].plot(frame["time_ps"], frame["volume_per_atom"], lw=1.0, color="tab:purple")
+        axes[1].plot(frame[x], frame["volume_per_atom"], lw=1.0, color="tab:purple")
         axes[1].set_ylabel("volume (Å$^3$/atom)")
-        axes[1].set_xlabel("time (ps)")
+        axes[1].set_xlabel(xlabel)
         axes[1].grid(alpha=0.3)
         for ax in axes:
             self._stage_marks(ax)

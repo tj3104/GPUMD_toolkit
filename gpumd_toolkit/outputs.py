@@ -548,14 +548,38 @@ def read_active(path: Path | str = "active.out") -> pd.DataFrame:
 def read_mcmd(
     path: Path | str = "mcmd.out", *, species: Sequence[str] = ()
 ) -> pd.DataFrame:
-    """``mcmd.out``: MD ステップ・MC 受理率・各元素の濃度。"""
+    """``mcmd.out``: MD ステップ・MC 受理率・各元素の濃度・累積 MC 試行数。"""
     frame = read_table(path, default_name="mcmd.out")
     n_species = frame.shape[1] - 2
     names = list(species) if species else [f"c_{i}" for i in range(n_species)]
     if len(names) != n_species:
         raise ValueError(f"濃度は {n_species} 列ありますが species は {len(names)} 個です。")
     frame.columns = ["step", "acceptance"] + [f"c_{s}" for s in names]
+    frame["mc_trials"] = _mcmd_cumulative_trials(_resolve(path, "mcmd.out"), len(frame))
     return frame
+
+
+def _mcmd_cumulative_trials(path: Path, n_rows: int) -> np.ndarray:
+    """``mcmd.out`` の各行までの累積 MC 試行数。
+
+    GPUMD は ``run`` ごとに ``# mc <type> <N_md> <N_mc> ...`` のヘッダを書き、
+    以降 1 行 = N_mc 回の試行になる (``num_MD_steps`` は run ごとにリセット)。
+    """
+    per_row: list[int] = []
+    current = 0
+    for line in path.read_text().splitlines():
+        tokens = line.split()
+        if not tokens:
+            continue
+        if tokens[0] == "#":
+            if len(tokens) >= 5 and tokens[1] == "mc":
+                try:
+                    current = int(tokens[4])
+                except ValueError:
+                    current = 0
+            continue
+        per_row.append(current)
+    return np.cumsum(np.asarray(per_row[:n_rows], dtype=int))
 
 
 # ------------------------------------------------------------ 熱力学的積分
