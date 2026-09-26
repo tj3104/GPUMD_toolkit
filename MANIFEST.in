@@ -1,0 +1,7 @@
+include README.md
+include requirements.txt
+include mission.md
+include manual.html
+recursive-include conda *
+recursive-include scripts *.py
+recursive-include tests *.py

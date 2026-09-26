@@ -1,0 +1,36 @@
+# 仮想環境: /home/tajimamainpc/.venv/gpumd312
+#
+# パッケージとして入れる場合 (推奨。gpumd-toolkit コマンドが付く):
+#   source /home/tajimamainpc/.venv/gpumd312/bin/activate
+#   uv pip install -e ".[all]"
+#
+# 依存だけ入れる場合:
+#   uv pip install -r requirements.txt
+#
+# conda:
+#   conda env create -f conda/environment.yml
+#   conda build conda/ && conda install --use-local gpumd-toolkit
+
+ase>=3.24
+numpy>=1.24
+scipy>=1.11
+pandas>=2.0
+matplotlib>=3.8
+joblib>=1.4
+
+# 任意 (pyproject.toml の extras に対応)
+calorine>=3.5        # GPUMD 公式推奨の Python インターフェース (nep_cpu を同梱)
+netCDF4>=1.6         # dump_netcdf のトラジェクトリを読む場合
+pytest>=8.0          # テスト用
+
+# «別途» GitHub から入れるもの
+#   uv pip install setuptools wheel
+#   uv pip install --no-build-isolation "gpyumd @ git+https://github.com/AlexGabourie/gpyumd.git"
+#   uv pip install "pynep @ git+https://github.com/bigd4/PyNEP.git"
+#
+# gpyumd : GPUMD 入出力の別実装。本ツールキットは必須にしていないが、
+#          入っていれば example の比較などに利用できる。
+# pynep  : NEP_CPU ベースの ASE calculator。CPU のみの環境で使う。
+#
+# GPUMD 本体 (gpumd / nep 実行ファイル) は別途ビルドが必要:
+#   https://github.com/brucefan1983/GPUMD

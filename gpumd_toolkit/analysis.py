@@ -116,20 +116,52 @@ class RunSpec:
         return sum(s.steps for s in self.stages)
 
 
+#: ``ensemble <name> <T_1> <T_2> ...`` の形をとるアンサンブル
+_LEADING_TEMPERATURE_ENSEMBLES = (
+    "nvt_ber", "nvt_nhc", "nvt_bdp", "nvt_lan", "nvt_bao", "nvt_qtb",
+    "npt_ber", "npt_scr",
+)
+
+
+def _float(token: str) -> float | None:
+    try:
+        return float(token)
+    except (TypeError, ValueError):
+        return None
+
+
 def _parse_ensemble(tokens: Sequence[str]) -> dict:
+    """``ensemble`` 行から名前と目標温度を取り出す。
+
+    GPUMD のアンサンブルは引数の並びが family ごとにまったく違うので、
+    「2 番目と 3 番目が温度」と決め打ちにはできない
+    (``heat_lan 300 100 30 0 1`` の 100 は温度ではなく τ/Δt、
+    ``pimd 32 300 300 100`` の 32 はビーズ数)。
+    """
     name = tokens[0]
+    rest = list(tokens[1:])
     T_start = T_end = None
-    if name == "nve":
-        pass
-    elif name.endswith("_mttk"):
-        if "temp" in tokens:
-            i = tokens.index("temp")
-            T_start, T_end = float(tokens[i + 1]), float(tokens[i + 2])
-    elif len(tokens) >= 3:
-        try:
-            T_start, T_end = float(tokens[1]), float(tokens[2])
-        except ValueError:
-            pass
+
+    if "temp" in rest:
+        # npt_mttk / nvt_mttk / npt_qtb / ti_* / nphug ... : temp <T1> [<T2>]
+        i = rest.index("temp")
+        T_start = _float(rest[i + 1]) if len(rest) > i + 1 else None
+        T_end = _float(rest[i + 2]) if len(rest) > i + 2 else None
+        if T_end is None:
+            T_end = T_start
+    elif name in _LEADING_TEMPERATURE_ENSEMBLES:
+        T_start = _float(rest[0]) if rest else None
+        T_end = _float(rest[1]) if len(rest) > 1 else None
+    elif name.startswith("heat_") and name != "heat_ttm":
+        # heat_* <T> <T_coup> <delta_T> <source> <sink>
+        T_start = T_end = _float(rest[0]) if rest else None
+    elif name == "heat_ttm":
+        T_start = T_end = _float(rest[0]) if rest else None
+    elif name in ("pimd", "pimd_scr"):
+        # pimd <num_beads> <T_1> <T_2> <T_coup> ...
+        T_start = _float(rest[1]) if len(rest) > 1 else None
+        T_end = _float(rest[2]) if len(rest) > 2 else None
+    # nve / rpmd / trpmd / ttm / msst / wall_* は目標温度を持たない
     return {"ensemble": name, "T_start": T_start, "T_end": T_end}
 
 

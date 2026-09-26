@@ -1,7 +1,11 @@
 """GPUMD トラジェクトリ (``dump.xyz``) の読み込みと形式変換。
 
-mission.md の要求どおり XDATCAR と ASE ``.traj`` を主対象とし、
-ASE が書ける形式 (extxyz, cif, pdb, lammps-dump, netcdf など) にも変換できる。
+**既定の出力は拡張 XYZ と XDATCAR**。GPUMD が吐く ``dump.xyz`` がそのまま
+拡張 XYZ なので、追加の変換なしで OVITO / VESTA / ASE / VMD から開ける。
+ASE の ``.traj`` は専用ツールがないと中身を見られず扱いにくいため、
+明示的に指定したときだけ書く。
+
+ASE が書ける他の形式 (cif, pdb, lammps-dump, netcdf など) にも変換できる。
 """
 
 from __future__ import annotations
@@ -40,8 +44,8 @@ class TrajectoryConverter:
     Examples
     --------
     >>> conv = TrajectoryConverter("runs/si_nvt/dump.xyz")
+    >>> conv.to_xyz("runs/si_nvt/trajectory.xyz", stride=10)
     >>> conv.to_xdatcar("runs/si_nvt/XDATCAR", stride=10)
-    >>> conv.to_ase_traj("runs/si_nvt/md.traj")
     >>> frames = conv.read(index="-10:")      # 最後の 10 フレーム
     """
 
@@ -141,12 +145,25 @@ class TrajectoryConverter:
         """VASP の XDATCAR 形式で書き出す。"""
         return self.convert(output, fmt="xdatcar", **kwargs)
 
-    def to_ase_traj(self, output: Path | str = "md.traj", **kwargs) -> Path:
-        """ASE の ``.traj`` 形式で書き出す。"""
-        return self.convert(output, fmt="traj", **kwargs)
+    def to_xyz(self, output: Path | str = "trajectory.xyz", **kwargs) -> Path:
+        """拡張 XYZ 形式で書き出す (推奨)。
 
-    def to_extxyz(self, output: Path | str = "trajectory.xyz", **kwargs) -> Path:
+        GPUMD の ``dump.xyz`` と同じ形式なので、間引き (``stride``) や
+        フレームの切り出しだけしたい場合に使う。
+        """
         return self.convert(output, fmt="extxyz", **kwargs)
+
+    #: :meth:`to_xyz` の別名 (旧 API)
+    to_extxyz = to_xyz
+
+    def to_ase_traj(self, output: Path | str = "md.traj", **kwargs) -> Path:
+        """ASE の ``.traj`` 形式で書き出す。
+
+        .. note::
+           扱いやすさの点では :meth:`to_xyz` / :meth:`to_xdatcar` を推奨する。
+           ``.traj`` は ASE 専用のバイナリなので他のツールで開けない。
+        """
+        return self.convert(output, fmt="traj", **kwargs)
 
     def to_poscar(self, output: Path | str = "CONTCAR", index: int = -1) -> Path:
         """指定フレームを POSCAR 形式で書き出す。"""
@@ -159,11 +176,11 @@ class TrajectoryConverter:
         self,
         output_dir: Path | str,
         *,
-        formats: Sequence[str] = ("xdatcar", "traj"),
+        formats: Sequence[str] = ("xyz", "xdatcar"),
         stride: int = 1,
         basename: str = "trajectory",
     ) -> dict[str, Path]:
-        """複数形式へ一括変換する。"""
+        """複数形式へ一括変換する (既定は拡張 XYZ と XDATCAR)。"""
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
         written: dict[str, Path] = {}

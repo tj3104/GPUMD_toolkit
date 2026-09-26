@@ -1,3 +1,41 @@
+Metadata-Version: 2.4
+Name: gpumd-toolkit
+Version: 0.2.0
+Summary: GPUMD を Python から使いこなすためのツールキット (MD・自由エネルギー・MC・熱輸送・PIMD・衝撃波・TTM・Active Learning)
+License-Expression: MIT
+Project-URL: Homepage, https://github.com/brucefan1983/GPUMD
+Project-URL: Documentation, https://gpumd.org/
+Keywords: GPUMD,molecular-dynamics,NEP,machine-learning-potential,thermal-conductivity,free-energy,monte-carlo,PIMD
+Classifier: Development Status :: 4 - Beta
+Classifier: Intended Audience :: Science/Research
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Programming Language :: Python :: 3.12
+Classifier: Topic :: Scientific/Engineering :: Chemistry
+Classifier: Topic :: Scientific/Engineering :: Physics
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+Requires-Dist: ase>=3.24
+Requires-Dist: numpy>=1.24
+Requires-Dist: scipy>=1.11
+Requires-Dist: pandas>=2.0
+Requires-Dist: matplotlib>=3.8
+Requires-Dist: joblib>=1.4
+Provides-Extra: calorine
+Requires-Dist: calorine>=3.5; extra == "calorine"
+Provides-Extra: netcdf
+Requires-Dist: netCDF4>=1.6; extra == "netcdf"
+Provides-Extra: test
+Requires-Dist: pytest>=8.0; extra == "test"
+Provides-Extra: docs
+Requires-Dist: sphinx>=7.0; extra == "docs"
+Requires-Dist: furo; extra == "docs"
+Provides-Extra: all
+Requires-Dist: calorine>=3.5; extra == "all"
+Requires-Dist: netCDF4>=1.6; extra == "all"
+Requires-Dist: pytest>=8.0; extra == "all"
+
 # gpumd_toolkit — GPUMD を Python から使いこなすためのクラス群
 
 `mission.md` の要件に沿って、GPUMD (https://gpumd.org) を Python から

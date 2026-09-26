@@ -1,0 +1,55 @@
+{% set name = "gpumd-toolkit" %}
+{% set version = "0.2.0" %}
+
+package:
+  name: {{ name|lower }}
+  version: {{ version }}
+
+source:
+  path: ..
+
+build:
+  noarch: python
+  number: 0
+  script: {{ PYTHON }} -m pip install . -vv --no-deps --no-build-isolation
+  entry_points:
+    - gpumd-toolkit = gpumd_toolkit.cli:main
+
+requirements:
+  host:
+    - python >=3.10
+    - pip
+    - setuptools >=77
+    - wheel
+  run:
+    - python >=3.10
+    - ase >=3.24
+    - numpy >=1.24
+    - scipy >=1.11
+    - pandas >=2.0
+    - matplotlib-base >=3.8
+    - joblib >=1.4
+
+test:
+  imports:
+    - gpumd_toolkit
+    - gpumd_toolkit.inputs
+    - gpumd_toolkit.outputs
+    - gpumd_toolkit.workflows
+  commands:
+    - gpumd-toolkit --help
+
+about:
+  home: https://gpumd.org/
+  license: MIT
+  summary: GPUMD を Python から使いこなすためのツールキット
+  description: |
+    GPUMD の run.in キーワードを一通り Python API にしたツールキット。
+    静的計算・MD・自由エネルギー (熱力学的積分)・Monte Carlo・熱輸送・
+    拡散/イオン伝導・電子物性・PIMD/量子熱浴・衝撃波・二温度モデル・
+    機械的変形/外場・NEP の Active Learning に対応する。
+    GPUMD 本体 (gpumd / nep 実行ファイル) は別途ビルドが必要。
+
+extra:
+  recipe-maintainers:
+    - gpumd-toolkit

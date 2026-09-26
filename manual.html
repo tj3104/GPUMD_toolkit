@@ -471,20 +471,23 @@ td:first-child { white-space: nowrap; }
 
   <nav class="rail" aria-label="目次">
     <span class="rail-mark">gpumd_toolkit</span>
-    <span class="rail-sub">v0.1.0 · Python 3.12</span>
+    <span class="rail-sub">v0.2.0 · Python 3.12</span>
     <ul class="rail-list">
       <li><a class="rail-link" href="#overview"><span class="n">00</span><span>概要と構成</span></a></li>
       <li><a class="rail-link" href="#setup"><span class="n">01</span><span>セットアップ</span></a></li>
       <li><a class="rail-link" href="#structure"><span class="n">02</span><span>構造の読み込み</span></a></li>
       <li><a class="rail-link" href="#md"><span class="n">03</span><span>MD 計算</span></a></li>
-      <li><a class="rail-link" href="#analysis"><span class="n">04</span><span>解析・可視化</span></a></li>
-      <li><a class="rail-link" href="#traj"><span class="n">05</span><span>トラジェクトリ変換</span></a></li>
-      <li><a class="rail-link" href="#parallel"><span class="n">06</span><span>並列実行</span></a></li>
-      <li><a class="rail-link" href="#ase"><span class="n">07</span><span>ASE ベースの実行</span></a></li>
-      <li><a class="rail-link" href="#dpmd"><span class="n">08</span><span>DPMD example と予実</span></a></li>
-      <li><a class="rail-link" href="#cli"><span class="n">09</span><span>CLI スクリプト</span></a></li>
-      <li><a class="rail-link" href="#tests"><span class="n">10</span><span>テスト</span></a></li>
-      <li><a class="rail-link" href="#design"><span class="n">11</span><span>設計メモ</span></a></li>
+      <li><a class="rail-link" href="#workflows"><span class="n">04</span><span>GPUMD の全機能</span></a></li>
+      <li><a class="rail-link" href="#keywords"><span class="n">05</span><span>キーワードとグループ</span></a></li>
+      <li><a class="rail-link" href="#outputs"><span class="n">06</span><span>出力の読み込みと後処理</span></a></li>
+      <li><a class="rail-link" href="#analysis"><span class="n">07</span><span>解析・可視化</span></a></li>
+      <li><a class="rail-link" href="#traj"><span class="n">08</span><span>トラジェクトリ変換</span></a></li>
+      <li><a class="rail-link" href="#parallel"><span class="n">09</span><span>並列実行</span></a></li>
+      <li><a class="rail-link" href="#ase"><span class="n">10</span><span>ASE ベースの実行</span></a></li>
+      <li><a class="rail-link" href="#dpmd"><span class="n">11</span><span>DPMD example と予実</span></a></li>
+      <li><a class="rail-link" href="#cli"><span class="n">12</span><span>コマンドライン</span></a></li>
+      <li><a class="rail-link" href="#tests"><span class="n">13</span><span>テスト</span></a></li>
+      <li><a class="rail-link" href="#design"><span class="n">14</span><span>設計メモ</span></a></li>
     </ul>
     <div class="rail-foot">
       GPUMD 35b47fe<br>
@@ -550,6 +553,25 @@ td:first-child { white-space: nowrap; }
     <!-- ============================================ 01 -->
     <section class="sec" id="setup">
       <h2><span class="n">01</span>セットアップ</h2>
+
+      <p class="prose">
+        パッケージとしてインストールすると <code>gpumd-toolkit</code> コマンドが入る。
+      </p>
+      <div class="block">
+        <div class="block-bar"><span class="block-tag">bash</span><button class="copy" type="button">copy</button></div>
+<pre><code class="language-bash">source /home/tajimamainpc/.venv/gpumd312/bin/activate
+
+# pip (開発用は -e)
+uv pip install -e ".[all]"
+
+# conda パッケージを作る
+conda build conda/
+conda install --use-local gpumd-toolkit
+
+# conda 環境をまるごと作る
+conda env create -f conda/environment.yml</code></pre>
+      </div>
+
 
       <div class="block">
         <div class="block-bar"><span class="block-tag">bash</span><button class="copy" type="button">copy</button></div>
@@ -1008,8 +1030,270 @@ calc.run(dry_run=True)   # model.xyz と run.in だけ書き出す</code></pre>
     </section>
 
     <!-- ============================================ 04 -->
+    <section class="sec" id="workflows">
+      <h2><span class="n">04</span>GPUMD の全機能 —<span class="cls">gpumd_toolkit.workflows</span></h2>
+
+      <p class="prose">
+        <code>GPUMDCalculation</code> は NVE / NVT / NPT / NPH までを扱う。
+        それ以外の GPUMD の機能は分類ごとのサブクラスにまとめてある。
+        どのクラスも <code>GPUMDCalculation</code> を継承しているので、構造の読み込み・
+        スーパーセル化・<code>run()</code>・解析はすべて同じ作法で使える。
+      </p>
+
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr><th>#</th><th>分類</th><th>クラス</th><th>主な GPUMD キーワード</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>1</td><td>静的計算・構造計算</td><td><code>StaticCalculation</code></td>
+                <td><code>minimize</code> <code>compute_cohesive</code> <code>compute_elastic</code> <code>compute_phonon</code></td></tr>
+            <tr><td>2</td><td>通常の MD・アンサンブル</td><td><code>GPUMDCalculation</code></td>
+                <td><code>nve</code> <code>nvt_*</code> <code>npt_*</code> <code>nph_mttk</code></td></tr>
+            <tr><td>3</td><td>自由エネルギー・熱力学的積分</td><td><code>FreeEnergyCalculation</code></td>
+                <td><code>ti_spring</code> <code>ti_liquid</code> <code>ti_rs</code> <code>ti_as</code> <code>ti</code></td></tr>
+            <tr><td>4</td><td>Monte Carlo・組成自由度</td><td><code>MonteCarloCalculation</code></td>
+                <td><code>mc canonical</code> <code>mc sgc</code> <code>mc vcsgc</code></td></tr>
+            <tr><td>–</td><td>熱輸送</td><td><code>ThermalTransport</code></td>
+                <td><code>compute_hac</code> <code>compute_hnemd</code> <code>compute_hnemdec</code> <code>heat_*</code> <code>compute_shc</code> <code>compute_gkma</code> <code>compute_hnema</code></td></tr>
+            <tr><td>6</td><td>拡散・イオン伝導・液体物性</td><td><code>DiffusionCalculation</code></td>
+                <td><code>compute_msd</code> <code>compute_sdc</code> <code>compute_ic</code> <code>compute_viscosity</code> <code>compute_rdf</code> <code>compute_adf</code> <code>compute_orientorder</code> <code>compute_chunk</code></td></tr>
+            <tr><td>7</td><td>電子・電気的性質</td><td><code>ElectronicCalculation</code></td>
+                <td><code>compute_lsqt</code> <code>dump_dipole</code> <code>dump_polarizability</code> <code>compute_dpdt</code> <code>add_efield</code> <code>kspace</code></td></tr>
+            <tr><td>8</td><td>PIMD・核量子効果</td><td><code>PathIntegralCalculation</code></td>
+                <td><code>pimd</code> <code>pimd_scr</code> <code>rpmd</code> <code>trpmd</code> <code>nvt_qtb</code> <code>npt_qtb</code> <code>dump_beads</code></td></tr>
+            <tr><td>9</td><td>高圧・衝撃波</td><td><code>ShockCalculation</code></td>
+                <td><code>msst</code> <code>nphug</code> <code>wall_piston</code> <code>wall_mirror</code> <code>wall_harmonic</code> <code>dump_shock_nemd</code></td></tr>
+            <tr><td>10</td><td>Two-Temperature Model</td><td><code>TwoTemperatureCalculation</code></td>
+                <td><code>ttm</code> <code>heat_ttm</code> <code>electron_stop</code></td></tr>
+            <tr><td>11</td><td>機械的・外場・特殊操作</td><td><code>MechanicalCalculation</code></td>
+                <td><code>deform</code> <code>change_box</code> <code>fix</code> <code>move</code> <code>add_force</code> <code>add_spring</code> <code>deposit</code> <code>plumed</code> <code>dftd3</code></td></tr>
+            <tr><td>12</td><td>NEP の不確かさ・Active Learning</td><td><code>ActiveLearningCalculation</code></td>
+                <td><code>active</code> <code>compute_extrapolation</code> <code>dump_observer</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>静的計算 — 弾性定数・状態方程式・フォノン</h3>
+      <div class="block">
+        <div class="block-bar"><span class="block-tag">python</span><button class="copy" type="button">copy</button></div>
+<pre><code class="language-python">from gpumd_toolkit.workflows import StaticCalculation, band_path_kpoints
+
+calc = StaticCalculation("POSCAR", "nep.txt", "runs/static", repeat=(2, 2, 2))
+calc.relax(relax_cell=True)      # FIRE でセルごと最適化
+calc.elastic(strain=0.01)        # 弾性定数 C_ij
+calc.cohesive_curve(0.95, 1.05)  # 状態方程式
+calc.single_point()              # エネルギー・力・応力
+calc.run()
+
+calc.elastic_matrix()            # 6x6 [GPa]
+calc.elastic_moduli()            # B = 169.3 GPa, G = 61.1 GPa, E = 163.6 GPa, nu = 0.339
+calc.energy_per_atom(); calc.forces(); calc.stress()
+calc.equilibrium_from_cohesive()
+
+# フォノン分散 (kpoints.in とスーパーセルが必要)
+path = band_path_kpoints([[0,0,0], [0.5,0,0], [0.5,0.5,0], [0,0,0]], 50)
+calc.phonon(displacement=0.01, kpoints=path, replicate=(4, 4, 4))</code></pre>
+      </div>
+
+      <h3>自由エネルギー — 熱力学的積分</h3>
+      <p class="prose">
+        <code>run</code> のステップ数は <code>2 × (tequil + tswitch)</code> でなければ
+        ならない。これは自動で計算される。
+      </p>
+      <div class="block">
+        <div class="block-bar"><span class="block-tag">python</span><button class="copy" type="button">copy</button></div>
+<pre><code class="language-python">from gpumd_toolkit.workflows import FreeEnergyCalculation, melting_point_from_curves
+
+solid = FreeEnergyCalculation("POSCAR", "nep.txt", "runs/fe", repeat=(3, 3, 3))
+solid.equilibrate(temperature=300, steps=20_000)
+solid.frenkel_ladd(temperature=300, t_equil=5_000, t_switch=20_000)
+solid.run()
+
+solid.gibbs_free_energy()   # {'E_Einstein': -0.055, 'F': -4.306, 'G': -4.306, ...}
+solid.hysteresis()          # 往復のずれ。大きければ t_switch を伸ばす
+
+# 可逆スケーリングで G(T) に広げ、液相の曲線と交わる点が融点
+rs = FreeEnergyCalculation("POSCAR", "nep.txt", "runs/rs")
+rs.reversible_scaling(T_min=300, T_max=2000, pressure=0.0, t_switch=50_000)
+rs.run()
+curve = rs.free_energy_curve(T0=300, G0=solid.gibbs_free_energy()["G"])
+melting_point_from_curves(curve, liquid_curve)</code></pre>
+      </div>
+
+      <h3>熱輸送 — HNEMD / Green-Kubo / NEMD</h3>
+      <div class="block">
+        <div class="block-bar"><span class="block-tag">python</span><button class="copy" type="button">copy</button></div>
+<pre><code class="language-python">from gpumd_toolkit.workflows import ThermalTransport
+
+# HNEMD (最も効率がよい)
+calc = ThermalTransport("POSCAR", "nep.txt", "runs/hnemd", min_cell_length=20.0)
+calc.equilibrate(temperature=300, steps=50_000)
+calc.hnemd(temperature=300, steps=2_000_000, Fe=1e-5, direction="x")
+calc.spectral(Nc=250, direction="x", num_omega=1000, max_omega=400)   # スペクトル熱流
+calc.run()
+calc.thermal_conductivity(); calc.plot_kappa()
+
+# source/sink NEMD (グループ分けが要るので専用コンストラクタ)
+calc = ThermalTransport.for_nemd("POSCAR", "nep.txt", "runs/nemd",
+                                 axis="x", n_blocks=8, repeat=(14, 6, 6))
+calc.equilibrate(temperature=300, steps=20_000)
+calc.nemd(temperature=300, steps=2_000_000, delta_T=40, method="lan")
+calc.run()
+calc.nemd_result()                 # kappa, 熱流, 温度勾配, ΔT
+calc.plot_temperature_profile()</code></pre>
+      </div>
+      <p class="prose">
+        GPUMD の <code>fix</code> は 1 つの <code>run</code> につき 1 グループしか効かないため、
+        <code>nemd_layout()</code> は両端の固定層を <strong>同じグループ 0</strong> に
+        まとめている。
+      </p>
+
+      <h3>Monte Carlo / 拡散 / PIMD / 衝撃波 / TTM / 変形 / Active Learning</h3>
+      <div class="block">
+        <div class="block-bar"><span class="block-tag">python</span><button class="copy" type="button">copy</button></div>
+<pre><code class="language-python">from gpumd_toolkit.workflows import (
+    MonteCarloCalculation, DiffusionCalculation, PathIntegralCalculation,
+    ShockCalculation, TwoTemperatureCalculation, MechanicalCalculation,
+    ActiveLearningCalculation,
+)
+
+# 4. 組成サンプリング (VCSGC)
+mc = MonteCarloCalculation("alloy.xyz", "nep.txt", "runs/mc", min_cell_length=20.0)
+mc.vcsgc(temperature=800, steps=200_000, phi={"Cu": -0.5, "Ni": 0.5}, kappa=100)
+
+# 6. 液体の輸送係数
+liq = DiffusionCalculation("liquid.xyz", "nep.txt", "runs/liquid", min_cell_length=16.0)
+liq.equilibrate(temperature=1500, steps=50_000, pressure=0.0)
+liq.production(temperature=1500, steps=500_000, msd=True, viscosity=True,
+               rdf=True, ic=(0, 1.0), per_species=True)
+# -> liq.diffusion_coefficient() / liq.viscosity() / liq.ionic_conductivity()
+
+# 8. 核量子効果
+pi = PathIntegralCalculation("water.xyz", "nep.txt", "runs/pimd")
+pi.pimd(num_beads=32, temperature=300, steps=200_000)   # 厳密 (重い)
+pi.qtb(temperature=300, steps=200_000, f_max=200)       # 量子熱浴 (安価)
+
+# 9. 衝撃波
+sh = ShockCalculation("POSCAR", "nep.txt", "runs/shock", min_cell_length=16.0)
+sh.msst(shock_velocity=8.0, steps=200_000, direction="x")
+# -> sh.hugoniot_state()
+
+# 10. レーザー加熱
+ttm = TwoTemperatureCalculation("POSCAR", "nep.txt", "runs/ttm", repeat=(4, 4, 14))
+ttm.ttm(steps=200_000, Ce=1e-4, rho_e=1.0, kappa_e=0.005, gamma_p=0.01,
+        grid=(1, 1, 12), T_e_init=2000, source=0.05)
+
+# 11. 引張試験 (ひずみ速度 [1/s] を deform の Å/step に自動換算)
+mech = MechanicalCalculation("POSCAR", "nep.txt", "runs/tensile", repeat=(8, 3, 3))
+mech.equilibrate(temperature=300, steps=20_000, pressure=0.0)
+mech.tensile(temperature=300, steps=500_000, strain_rate=1e8, axis="x")
+# -> mech.mechanical_properties() / mech.plot_stress_strain()
+
+# 12. committee による構造選別
+al = ActiveLearningCalculation("POSCAR", [["nep0.txt"], ["nep1.txt"], ["nep2.txt"]], "runs/al")
+al.explore(T_start=300, T_end=2000, steps=500_000, threshold=0.05)
+# -> al.uncertainty_summary() / al.write_candidates()</code></pre>
+      </div>
+    </section>
+
+    <!-- ============================================ 05 -->
+    <section class="sec" id="keywords">
+      <h2><span class="n">05</span>キーワードとグループ —<span class="cls">inputs · groups</span></h2>
+
+      <p class="prose">
+        ワークフローに無い組み合わせは、キーワード関数を直接 <code>run.in</code> に
+        差し込める。各関数は引数をその場で検証してから 1 行の文字列を返すので、
+        GPUMD を起動してから「引数の個数が違う」と怒られることがない。
+        一覧は <code>gpumd-toolkit keywords</code> で出る。
+      </p>
+
+      <div class="block">
+        <div class="block-bar"><span class="block-tag">python</span><button class="copy" type="button">copy</button></div>
+<pre><code class="language-python">from gpumd_toolkit import GPUMDCalculation
+from gpumd_toolkit.inputs import computes, dumps, modifiers
+from gpumd_toolkit.inputs.ensembles import MSST
+
+calc = GPUMDCalculation("POSCAR", "nep.txt", "runs/custom")
+calc.add_preamble(modifiers.dftd3("pbe", 12, 6))       # potential の直後
+calc.nvt(temperature=300, steps=100_000)
+calc.add_commands(                                      # 直近ステージの run 直前
+    computes.compute_rdf(8.0, 400, 1000),
+    computes.compute_msd(5, 500),
+    dumps.dump_netcdf(1000, "movie.nc", compression=1),
+)
+calc.add_ensemble(MSST("x", 15, qmass=10000, mu=10), steps=50_000)
+calc.add_action(computes.compute_elastic(0.01))         # run 不要のキーワード
+print(calc.preview())</code></pre>
+      </div>
+
+      <p class="prose">
+        <code>fix</code> / <code>move</code> / <code>heat_*</code> / <code>ttm</code> /
+        <code>compute</code> / <code>add_force</code> / <code>add_efield</code> /
+        <code>mc ... group</code> は「grouping method 番号 + グループ番号」で
+        原子集合を指定する。<code>model.xyz</code> の <code>group:I:&lt;n&gt;</code> 列が
+        その定義にあたる。
+      </p>
+
+      <div class="block">
+        <div class="block-bar"><span class="block-tag">python</span><button class="copy" type="button">copy</button></div>
+<pre><code class="language-python">from gpumd_toolkit.groups import (
+    GroupingScheme, uniform_slabs, by_species, by_region, by_molecule, nemd_layout,
+)
+
+scheme = GroupingScheme()
+scheme.add(uniform_slabs(atoms, "z", 10), "slabs")    # 空間スラブ
+scheme.add(by_species(atoms), "species")              # 元素別
+scheme.add(by_molecule(atoms, cutoff=1.4), "mols")    # 分子別 (連結成分)
+print(scheme.summary())
+
+calc = GPUMDCalculation("POSCAR", "nep.txt", "runs/x", groupings=scheme)</code></pre>
+      </div>
+    </section>
+
+    <!-- ============================================ 06 -->
+    <section class="sec" id="outputs">
+      <h2><span class="n">06</span>出力の読み込みと後処理 —<span class="cls">outputs · postprocess</span></h2>
+
+      <p class="prose">
+        GPUMD の出力はほぼ「ヘッダなしの数値テーブル」なので、列の意味を知らないと
+        使えない。<code>OutputReader</code> は正しい列名を付けた
+        <code>DataFrame</code> を返す。<code>postprocess</code> は「DataFrame → 物理量」を
+        担当し、単位換算とフィット範囲の扱いをそこに集約してある。
+      </p>
+
+      <div class="block">
+        <div class="block-bar"><span class="block-tag">python</span><button class="copy" type="button">copy</button></div>
+<pre><code class="language-python">from gpumd_toolkit.outputs import OutputReader
+
+r = OutputReader("runs/liquid")
+r.available()
+r.thermo()          # 温度・エネルギー・応力・セル + volume / pressure を派生
+r.msd()             # MSD と SDC (all_groups ならグループ数を自動判定)
+r.viscosity()       # せん断 / 縦 / 体積粘性率を派生列で追加
+r.shc()             # (相関関数 K(t), スペクトル J_q(ω)) に分割
+r.elastic()         # 6x6 [GPa]
+r.ttm()             # 電子温度グリッドのスナップショット列
+r.shock_profiles()  # *_hist.txt をまとめて
+r.ti_summary("ti_spring")
+
+from gpumd_toolkit.postprocess import (
+    elastic_moduli,                  # C_ij -> B / G / E / ν (Voigt-Reuss-Hill)
+    nemd_thermal_conductivity,       # 温度勾配と熱浴出力 -> κ [W/mK]
+    green_kubo_kappa, hnemd_kappa,
+    diffusion_from_msd,              # MSD の傾き -> D [cm^2/s]
+    shear_viscosity, ionic_conductivity,
+    free_energy_reversible_scaling,  # ti_rs.csv -> G(T)
+    free_energy_adiabatic_switching, # ti_as.csv -> G(P)
+    vibrational_spectrum,            # 双極子/分極率 -> 赤外/ラマン
+    committee_uncertainty_summary,
+)</code></pre>
+      </div>
+    </section>
+
+    <!-- ============================================ 07 -->
     <section class="sec" id="analysis">
-      <h2><span class="n">04</span>解析・可視化 —<span class="cls">MDAnalyzer</span></h2>
+      <h2><span class="n">07</span>解析・可視化 —<span class="cls">MDAnalyzer</span></h2>
 
       <p class="prose">
         <code>thermo.out</code> を <code>run.in</code> と突き合わせて
@@ -1037,9 +1321,9 @@ compare_runs(["runs/T300K", "runs/T600K"], quantity="temperature", filename="cmp
       </div>
     </section>
 
-    <!-- ============================================ 05 -->
+    <!-- ============================================ 08 -->
     <section class="sec" id="traj">
-      <h2><span class="n">05</span>トラジェクトリ変換 —<span class="cls">TrajectoryConverter</span></h2>
+      <h2><span class="n">08</span>トラジェクトリ変換 —<span class="cls">TrajectoryConverter</span></h2>
 
       <div class="block">
         <div class="block-bar"><span class="block-tag">python</span><button class="copy" type="button">copy</button></div>
@@ -1047,23 +1331,33 @@ compare_runs(["runs/T300K", "runs/T600K"], quantity="temperature", filename="cmp
 
 t = TrajectoryConverter("runs/si_300K/dump.xyz")
 t.n_frames
+t.to_xyz("runs/si_300K/trajectory.xyz", stride=10) # 拡張 XYZ (間引き)
 t.to_xdatcar("runs/si_300K/XDATCAR", stride=10)   # VASP XDATCAR
-t.to_ase_traj("runs/si_300K/md.traj")             # ASE .traj
+t.to_poscar("runs/si_300K/CONTCAR")               # 最終フレーム
+t.convert_all("runs/si_300K")                     # 既定は xyz と XDATCAR
 t.convert("out.lammpstrj", fmt="lammps-dump")     # 他形式
 t.msd(time_step_ps=0.5)                           # アンラップ座標から MSD / 拡散係数
 t.rdf(rmax=8.0, stride=10)                        # g(r)</code></pre>
       </div>
 
       <p class="prose">
-        対応形式: <code>xdatcar</code>, <code>traj</code>, <code>extxyz</code>,
+        対応形式: <code>xyz</code> (= <code>extxyz</code>), <code>xdatcar</code>,
         <code>lammps-dump</code>, <code>pdb</code>, <code>cif</code>,
-        <code>netcdf</code>, <code>vasp</code>。
+        <code>netcdf</code>, <code>vasp</code>, <code>traj</code>。
+      </p>
+      <p class="prose">
+        <strong>出力は拡張 XYZ と XDATCAR を基本にしている。</strong>
+        GPUMD が吐く <code>dump.xyz</code> はそのまま拡張 XYZ なので、
+        OVITO / VESTA / VMD / ASE から変換なしで開ける。
+        ASE の <code>.traj</code> は専用ツールがないと中身を見られず扱いにくいため、
+        <code>fmt="traj"</code> を明示したときだけ書く
+        (<code>ASEMDRunner</code> も既定で <code>md.xyz</code> を書く)。
       </p>
     </section>
 
-    <!-- ============================================ 06 -->
+    <!-- ============================================ 09 -->
     <section class="sec" id="parallel">
-      <h2><span class="n">06</span>並列実行 —<span class="cls">ParallelRunner</span></h2>
+      <h2><span class="n">09</span>並列実行 —<span class="cls">ParallelRunner</span></h2>
 
       <div class="block">
         <div class="block-bar"><span class="block-tag">python</span><button class="copy" type="button">copy</button></div>
@@ -1087,9 +1381,9 @@ results = ParallelRunner(n_jobs=2).run(jobs)   # GPU が複数あれば自動で
       </p>
     </section>
 
-    <!-- ============================================ 07 -->
+    <!-- ============================================ 10 -->
     <section class="sec" id="ase">
-      <h2><span class="n">07</span>ASE ベースの実行 —<span class="cls">ASEMDRunner</span></h2>
+      <h2><span class="n">10</span>ASE ベースの実行 —<span class="cls">ASEMDRunner</span></h2>
 
       <p class="prose">3 つのバックエンドを同じ API で切り替えられる。</p>
 
@@ -1222,9 +1516,9 @@ dyn = runner.make_dynamics(ensemble="npt", temperature=300, taut=150)  # 積分�
       </div>
     </section>
 
-    <!-- ============================================ 08 -->
+    <!-- ============================================ 11 -->
     <section class="sec" id="dpmd">
-      <h2><span class="n">08</span>DPMD の example と予実 —<span class="cls">DPMDExample</span></h2>
+      <h2><span class="n">11</span>DPMD の example と予実 —<span class="cls">DPMDExample</span></h2>
 
       <p class="prose">
         題材は GPUMD 公式 example <code>14_DP/water_msd</code>
@@ -1309,9 +1603,38 @@ print(report.to_markdown())</code></pre>
       </div>
     </section>
 
-    <!-- ============================================ 09 -->
+    <!-- ============================================ 12 -->
     <section class="sec" id="cli">
-      <h2><span class="n">09</span>コマンドラインスクリプト</h2>
+      <h2><span class="n">12</span>コマンドライン</h2>
+
+      <p class="prose">
+        <code>pip install -e .</code> で入る統合 CLI。機能分類ごとのサブコマンドがある。
+        どれも <code>--dry-run</code> で <code>run.in</code> の生成だけ行える。
+      </p>
+      <div class="block">
+        <div class="block-bar"><span class="block-tag">bash</span><button class="copy" type="button">copy</button></div>
+<pre><code class="language-bash">gpumd-toolkit --help
+gpumd-toolkit keywords      # 対応している run.in キーワードの一覧
+gpumd-toolkit check         # 実行環境の確認
+
+gpumd-toolkit md POSCAR -p $NEP -o runs/nvt --temperature 300 --steps 20000
+gpumd-toolkit static POSCAR -p $NEP -o runs/static --relax --relax-cell --elastic
+gpumd-toolkit free-energy POSCAR -p $NEP -o runs/fe --path solid --temperature 300
+gpumd-toolkit mc alloy.xyz -p $NEP -o runs/mc --mode vcsgc --species Cu Ni --values -0.5 0.5
+gpumd-toolkit transport POSCAR -p $NEP -o runs/kappa --method hnemd
+gpumd-toolkit diffusion liquid.xyz -p $NEP -o runs/liquid --viscosity --rdf
+gpumd-toolkit pimd water.xyz -p $NEP -o runs/pimd --beads 32
+gpumd-toolkit shock POSCAR -p $NEP -o runs/shock --method msst --vp 8
+gpumd-toolkit ttm POSCAR -p $NEP -o runs/ttm --te 2000 --source 0.05
+gpumd-toolkit mechanical POSCAR -p $NEP -o runs/tensile --strain-rate 1e8
+gpumd-toolkit active-learning POSCAR -p nep0.txt nep1.txt nep2.txt -o runs/al
+
+gpumd-toolkit analyze runs/nvt
+gpumd-toolkit convert runs/nvt/dump.xyz runs/nvt/XDATCAR --to xdatcar --stride 10
+
+# 全機能を短いステップ数で一通り流すデモ
+python scripts/run_workflows_demo.py -p $NEP -o runs/demo --scale 800</code></pre>
+      </div>
 
       <div class="block">
         <div class="block-bar"><span class="block-tag">共通の前置き</span><button class="copy" type="button">copy</button></div>
@@ -1427,9 +1750,9 @@ python scripts/check_environment.py --json   # 機械可読</code></pre>
       </div>
     </section>
 
-    <!-- ============================================ 10 -->
+    <!-- ============================================ 13 -->
     <section class="sec" id="tests">
-      <h2><span class="n">10</span>テスト</h2>
+      <h2><span class="n">13</span>テスト</h2>
 
       <div class="block">
         <div class="block-bar"><span class="block-tag">bash</span><button class="copy" type="button">copy</button></div>
@@ -1443,9 +1766,9 @@ python -m pytest tests/ -v</code></pre>
       </p>
     </section>
 
-    <!-- ============================================ 11 -->
+    <!-- ============================================ 14 -->
     <section class="sec" id="design">
-      <h2><span class="n">11</span>設計メモ</h2>
+      <h2><span class="n">14</span>設計メモ</h2>
 
       <ul class="prose">
         <li>

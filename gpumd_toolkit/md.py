@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Sequence
@@ -27,6 +28,7 @@ from ase import Atoms
 
 from .analysis import MDAnalyzer, ThermoData
 from .config import CommandResult, GPUMDEnvironment
+from .groups import GroupingScheme
 from .inputs import (
     ALL_ENSEMBLES,
     NPH_ENSEMBLES,
@@ -36,6 +38,8 @@ from .inputs import (
     MDStage,
     RunInputBuilder,
 )
+from .inputs.ensembles import Ensemble
+from .outputs import OutputReader
 from .profiles import TemperatureProfile
 from .structure import DEFAULT_MAX_ATOMS, StructureHandler
 from .trajectory import TrajectoryConverter
@@ -65,6 +69,10 @@ class GPUMDResult:
     def analyzer(self) -> MDAnalyzer:
         return MDAnalyzer(self.workdir, n_atoms=self.n_atoms)
 
+    def outputs(self) -> OutputReader:
+        """GPUMD が書いた出力ファイル群への読み込み口。"""
+        return OutputReader(self.workdir)
+
     def thermo(self) -> ThermoData:
         return ThermoData.from_directory(self.workdir, n_atoms=self.n_atoms)
 
@@ -79,10 +87,22 @@ class GPUMDResult:
     def trajectory(self, filename: str = "dump.xyz") -> TrajectoryConverter:
         return TrajectoryConverter(self.workdir / filename)
 
+    def to_xyz(self, output: Path | str | None = None, **kwargs) -> Path:
+        """拡張 XYZ で書き出す (間引きやフレーム切り出しをしたいとき)。"""
+        return self.trajectory().to_xyz(output or self.workdir / "trajectory.xyz", **kwargs)
+
     def to_xdatcar(self, output: Path | str | None = None, **kwargs) -> Path:
+        """VASP の XDATCAR 形式で書き出す。"""
         return self.trajectory().to_xdatcar(output or self.workdir / "XDATCAR", **kwargs)
 
+    def convert_trajectory(
+        self, formats: Sequence[str] = ("xyz", "xdatcar"), **kwargs
+    ) -> dict[str, Path]:
+        """トラジェクトリを複数形式へ一括変換する (既定は xyz と XDATCAR)。"""
+        return self.trajectory().convert_all(self.workdir, formats=formats, **kwargs)
+
     def to_ase_traj(self, output: Path | str | None = None, **kwargs) -> Path:
+        """ASE の ``.traj`` で書き出す (扱いやすさでは xyz / XDATCAR を推奨)。"""
         return self.trajectory().to_ase_traj(output or self.workdir / "md.traj", **kwargs)
 
     def final_structure(self) -> Atoms:
@@ -152,7 +172,7 @@ class GPUMDCalculation:
         fast_read: bool = True,
         cache_structure: bool = True,
         max_atoms: int = DEFAULT_MAX_ATOMS,
-        groupings: list[list[list[int]]] | None = None,
+        groupings: GroupingScheme | list[list[list[int]]] | None = None,
         environment: GPUMDEnvironment | None = None,
         overwrite: bool = False,
     ) -> None:
@@ -164,7 +184,10 @@ class GPUMDCalculation:
         self.name = name or self.workdir.name
         self.environment = environment or GPUMDEnvironment()
         self.max_atoms = max_atoms
-        self.groupings = groupings
+        self.groupings = (
+            groupings.to_groupings() if isinstance(groupings, GroupingScheme) else groupings
+        )
+        self.grouping_scheme = groupings if isinstance(groupings, GroupingScheme) else None
 
         # --- 構造 ---
         if isinstance(structure, Atoms):
@@ -203,14 +226,22 @@ class GPUMDCalculation:
         self._result: GPUMDResult | None = None
 
     # ------------------------------------------------------------------ 内部
-    def _resolve_potential(self, potential) -> str | list[str]:
-        """ポテンシャルファイルを絶対パス化し、存在を確認する。"""
+    def _resolve_potential(self, potential):
+        """ポテンシャルファイルを絶対パス化し、存在を確認する。
+
+        * ``"nep.txt"`` -> ``potential`` 行 1 つ
+        * ``["dp.txt", "model.pb"]`` -> 引数が複数ある 1 つのポテンシャル
+        * ``[["nep0.txt"], ["nep1.txt"]]`` -> committee (``potential`` 行が複数)
+        """
         if isinstance(potential, (str, Path)):
-            items = [potential]
-            scalar = True
-        else:
-            items = list(potential)
-            scalar = False
+            return self._resolve_potential_args([potential], scalar=True)
+        items = list(potential)
+        if items and all(not isinstance(item, (str, Path)) for item in items):
+            return [self._resolve_potential_args(list(item), scalar=False) for item in items]
+        return self._resolve_potential_args(items, scalar=False)
+
+    @staticmethod
+    def _resolve_potential_args(items, *, scalar: bool):
         resolved: list[str] = []
         for i, item in enumerate(items):
             path = Path(item).expanduser()
@@ -265,6 +296,79 @@ class GPUMDCalculation:
     # ------------------------------------------------------------ ステージ追加
     def add_stage(self, stage: MDStage) -> "GPUMDCalculation":
         self.builder.add_stage(stage)
+        return self
+
+    def add_ensemble(
+        self, ensemble: Ensemble, *, steps: int, **kwargs
+    ) -> "GPUMDCalculation":
+        """特殊アンサンブル (QTB / NEMD 熱浴 / TTM / PIMD / TI / 衝撃波) を追加する。
+
+        Examples
+        --------
+        >>> from gpumd_toolkit.inputs.ensembles import PIMD
+        >>> calc.add_ensemble(PIMD(num_beads=32, T_start=300), steps=20000)
+        """
+        if not isinstance(ensemble, Ensemble):
+            raise TypeError(
+                "add_ensemble には gpumd_toolkit.inputs.ensembles のインスタンスを渡します。"
+                " 標準アンサンブルは nve() / nvt() / npt() / add_stage() を使ってください。"
+            )
+        return self.add_stage(MDStage(ensemble, steps=steps, **kwargs))
+
+    def add_commands(self, *lines: str) -> "GPUMDCalculation":
+        """直近のステージの ``run`` 直前に任意のキーワード行を挿入する。
+
+        まだステージが無ければ preamble (``potential`` の直後) に入れる。
+        :mod:`gpumd_toolkit.inputs.computes` や
+        :mod:`gpumd_toolkit.inputs.modifiers` の戻り値を渡す。
+        """
+        if not self.builder.stages:
+            self.builder.add_preamble(*lines)
+            return self
+        last = self.builder.stages[-1]
+        last.pre_commands = tuple(last.pre_commands) + tuple(lines)
+        return self
+
+    def add_preamble(self, *lines: str) -> "GPUMDCalculation":
+        """``potential`` / ``time_step`` の直後に行を差し込む (``dftd3`` など)。"""
+        self.builder.add_preamble(*lines)
+        return self
+
+    def add_action(self, *lines: str) -> "GPUMDCalculation":
+        """``run`` を伴わずその場で実行されるキーワード行を足す。
+
+        ``compute_cohesive`` / ``compute_elastic`` / ``compute_phonon`` 用。
+        """
+        self.builder.add_action(*lines)
+        return self
+
+    def ensure_grouping(self) -> int:
+        """grouping method が 1 つも無ければ「全原子 1 グループ」を追加する。
+
+        GPUMD の ``fix`` / ``move`` / ``add_force`` / ``add_efield`` /
+        ``add_spring`` / ``compute`` / ``ttm`` などは ``model.xyz`` に
+        grouping method が定義されていないと
+        ``grouping method should < maximum number of grouping methods``
+        で起動直後に止まる。グループを使わない場合でも最低 1 つは要る。
+
+        Returns
+        -------
+        int
+            使える grouping method 番号 (既にあればそのまま 0)。
+        """
+        if self.groupings:
+            return 0
+        from .groups import GroupingScheme, single_group
+
+        scheme = self.grouping_scheme or GroupingScheme()
+        scheme.add(single_group(self.atoms), "all")
+        self.grouping_scheme = scheme
+        self.groupings = scheme.to_groupings()
+        return 0
+
+    def set_replicate(self, na: int, nb: int, nc: int) -> "GPUMDCalculation":
+        """``run.in`` の先頭で ``replicate`` する (``compute_phonon`` に必要)。"""
+        self.builder.replicate = (int(na), int(nb), int(nc))
         return self
 
     def nve(self, *, steps: int, **kwargs) -> "GPUMDCalculation":
@@ -510,10 +614,8 @@ class GPUMDCalculation:
     # ------------------------------------------------------------------ 実行
     def write_inputs(self) -> dict[str, Path]:
         """``model.xyz`` と ``run.in`` を書き出す。"""
-        if self.builder.initial_temperature is None and self.builder.stages:
-            first = self.builder.stages[0]
-            if first.T_start is not None:
-                self.builder.initial_temperature = first.T_start
+        self._default_initial_temperature()
+        self.check_cell(strict=False)
         model = StructureHandler.write_model(
             self.atoms, self.workdir / "model.xyz", groupings=self.groupings
         )
@@ -522,6 +624,31 @@ class GPUMDCalculation:
             json.dumps(self.metadata(), indent=2, ensure_ascii=False)
         )
         return {"model": model, "run_in": run_in}
+
+    def nep_cutoffs(self) -> tuple[float, float] | None:
+        """使用中の NEP の ``(rc_radial, rc_angular)`` [Å]。NEP 以外なら ``None``。"""
+        potential = self.potential
+        if isinstance(potential, list):
+            potential = potential[0]
+            if isinstance(potential, list):
+                potential = potential[0]
+        return StructureHandler.nep_cutoffs(potential)
+
+    def check_cell(self, *, strict: bool = False) -> dict:
+        """GPUMD が受け付けるセル形状かどうかを確認する。
+
+        細長いセル (NEMD・衝撃波) で GPUMD が起動直後に落ちるのを
+        実行前に検出する。``strict=True`` なら例外、既定は警告。
+        """
+        cutoffs = self.nep_cutoffs()
+        if cutoffs is None:
+            return {"ok": True, "message": ""}
+        result = StructureHandler.check_nep_box(self.atoms, cutoffs[0])
+        if not result["ok"]:
+            if strict:
+                raise ValueError(result["message"])
+            warnings.warn(result["message"], RuntimeWarning)
+        return result
 
     def metadata(self) -> dict[str, Any]:
         return {
@@ -534,25 +661,35 @@ class GPUMDCalculation:
             "time_step_fs": self.builder.time_step,
             "total_steps": self.builder.total_steps,
             "total_time_ps": self.builder.total_time_ps(),
+            "groupings": (
+                self.grouping_scheme.names if self.grouping_scheme is not None else None
+            ),
             "stages": [
                 {
-                    "label": stage.label,
-                    "ensemble": stage.ensemble,
-                    "steps": stage.steps,
-                    "T_start": stage.T_start,
-                    "T_end": stage.T_end,
-                    "pressure": stage.pressure,
-                    "T_coup": stage.temperature_coupling(self.builder.time_step),
-                    "tau_T_fs": stage.tau_T,
-                    "tau_p_fs": stage.tau_p,
+                    **stage.metadata(),
                     "cell_control": stage.describe_cell_control(self.builder.time_step),
                 }
                 for stage in self.builder.stages
             ],
         }
 
+    def _default_initial_temperature(self) -> None:
+        """``velocity`` 行の温度を最初のステージから決める。"""
+        if self.builder.initial_temperature is not None or not self.builder.stages:
+            return
+        first = self.builder.stages[0]
+        temperature = first.T_start
+        if temperature is None and first.ensemble_spec is not None:
+            spec = first.ensemble_spec
+            temperature = getattr(spec, "T_start", None) or getattr(
+                spec, "temperature", None
+            )
+        if temperature is not None:
+            self.builder.initial_temperature = float(temperature)
+
     def preview(self) -> str:
         """生成される ``run.in`` を文字列で返す (実行前の確認用)。"""
+        self._default_initial_temperature()
         return self.builder.build()
 
     def run(
@@ -619,9 +756,13 @@ class GPUMDCalculation:
         ]
         for i, stage in enumerate(self.builder.stages, 1):
             lines.append(
-                f"    {i:2d}. {stage.label:<30s} {stage.ensemble:<9s} {stage.steps:>9,d} steps"
+                f"    {i:2d}. {stage.label:<30s} {stage.ensemble_name:<12s}"
+                f" {stage.steps:>9,d} steps"
             )
-            if stage.ensemble in NPT_ENSEMBLES + NPH_ENSEMBLES:
+            if (
+                stage.ensemble_spec is not None
+                or stage.ensemble_name in NPT_ENSEMBLES + NPH_ENSEMBLES
+            ):
                 lines.append(
                     f"        {stage.describe_cell_control(self.builder.time_step)}"
                 )

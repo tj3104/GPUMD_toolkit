@@ -1,0 +1,66 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gpumd-toolkit"
+version = "0.2.0"
+description = "GPUMD を Python から使いこなすためのツールキット (MD・自由エネルギー・MC・熱輸送・PIMD・衝撃波・TTM・Active Learning)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+keywords = [
+    "GPUMD", "molecular-dynamics", "NEP", "machine-learning-potential",
+    "thermal-conductivity", "free-energy", "monte-carlo", "PIMD",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Chemistry",
+    "Topic :: Scientific/Engineering :: Physics",
+]
+dependencies = [
+    "ase>=3.24",
+    "numpy>=1.24",
+    "scipy>=1.11",
+    "pandas>=2.0",
+    "matplotlib>=3.8",
+    "joblib>=1.4",
+]
+
+[project.optional-dependencies]
+# GPUMD 公式推奨の Python インターフェース (nep_cpu を同梱)
+calorine = ["calorine>=3.5"]
+# NetCDF トラジェクトリの読み書き
+netcdf = ["netCDF4>=1.6"]
+test = ["pytest>=8.0"]
+docs = ["sphinx>=7.0", "furo"]
+all = ["calorine>=3.5", "netCDF4>=1.6", "pytest>=8.0"]
+
+[project.urls]
+Homepage = "https://github.com/brucefan1983/GPUMD"
+Documentation = "https://gpumd.org/"
+
+[project.scripts]
+gpumd-toolkit = "gpumd_toolkit.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["gpumd_toolkit*"]
+
+[tool.setuptools.package-data]
+gpumd_toolkit = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "slow: 時間のかかるテスト",
+]
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"

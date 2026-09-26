@@ -123,8 +123,10 @@ def build_parser() -> argparse.ArgumentParser:
                        default=["velocity", "force", "potential"],
                        help="dump_xyz に含める per-atom 量")
     group.add_argument("--convert", nargs="*", default=[],
-                       choices=["xdatcar", "traj", "extxyz", "lammps-dump", "pdb"],
-                       help="実行後にトラジェクトリを変換する形式")
+                       choices=["xyz", "xdatcar", "extxyz", "traj", "lammps-dump", "pdb", "cif"],
+                       help="実行後にトラジェクトリを変換する形式"
+                            " (GPUMD の dump.xyz はそのまま拡張 XYZ なので、"
+                            " 間引きたいときだけ xyz を指定すればよい)")
     group.add_argument("--stride", type=int, default=1, help="変換時のフレーム間引き")
     group.add_argument("--no-plot", action="store_true", help="解析プロットを作らない")
 

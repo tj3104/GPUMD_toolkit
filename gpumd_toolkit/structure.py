@@ -508,6 +508,79 @@ class StructureHandler:
         )
 
     @staticmethod
+    def nep_cutoffs(potential: Path | str) -> tuple[float, float] | None:
+        """NEP ファイルのヘッダから ``(rc_radial, rc_angular)`` [Å] を読む。
+
+        NEP 以外 (DP / Tersoff / EAM) や読めない場合は ``None`` を返す。
+        """
+        path = Path(potential).expanduser()
+        if not path.is_file():
+            return None
+        try:
+            with path.open() as handle:
+                for _ in range(10):
+                    line = handle.readline()
+                    if not line:
+                        break
+                    tokens = line.split()
+                    if tokens and tokens[0] == "cutoff" and len(tokens) >= 3:
+                        return float(tokens[1]), float(tokens[2])
+        except (OSError, ValueError):
+            return None
+        return None
+
+    @staticmethod
+    def check_nep_box(atoms: Atoms, rc_radial: float) -> dict:
+        """GPUMD (NEP) がセルを受け付けるか確認する。
+
+        GPUMD は周期方向のセル厚みが ``2.5 * (rc + 1)`` 以下だと内部で
+        セルを複製して対処するが、**別の方向が ``10 * rc`` より厚い**
+        場合は複製できず
+
+            The box has a thickness < 2.5 radial cutoffs in a periodic
+            direction and a thickness > 10 radial cutoffs in another direction.
+
+        で異常終了する。細長いセル (NEMD・衝撃波) で踏みやすい。
+
+        Returns
+        -------
+        dict
+            ``ok`` が False のとき ``message`` に対処法が入る。
+        """
+        thickness = StructureHandler.cell_thickness(atoms)
+        thin_limit = 2.5 * (rc_radial + 1.0)
+        thick_limit = 10.0 * rc_radial
+        thin = [
+            (axis, value)
+            for axis, value, periodic in zip("xyz", thickness, atoms.pbc)
+            if periodic and value <= thin_limit
+        ]
+        thick = [
+            (axis, value) for axis, value in zip("xyz", thickness) if value > thick_limit
+        ]
+        result = {
+            "ok": True,
+            "thickness": thickness,
+            "thin_limit": thin_limit,
+            "thick_limit": thick_limit,
+            "thin_directions": thin,
+            "thick_directions": thick,
+            "message": "",
+        }
+        if thin and thick:
+            result["ok"] = False
+            result["message"] = (
+                "GPUMD が受け付けないセル形状です"
+                f" (NEP の radial cutoff {rc_radial:g} Å)。\n"
+                f"  薄すぎる方向 (<= {thin_limit:.1f} Å): "
+                + ", ".join(f"{a}={v:.1f} Å" for a, v in thin)
+                + f"\n  厚すぎる方向 (> {thick_limit:.1f} Å): "
+                + ", ".join(f"{a}={v:.1f} Å" for a, v in thick)
+                + "\n  細い方向を厚くするか、長い方向を短くしてください。"
+            )
+        return result
+
+    @staticmethod
     def unique_species(atoms: Atoms) -> list[str]:
         seen: list[str] = []
         for symbol in atoms.get_chemical_symbols():

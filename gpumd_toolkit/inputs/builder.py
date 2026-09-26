@@ -5,22 +5,22 @@ GPUMD の ``run.in`` は「キーワード行の並び + ``run`` で 1 ステー
 引き継がれない) ため、ステージごとに必要な出力設定を書き直す必要がある。
 本モジュールはその煩雑さを吸収する。
 
-対応アンサンブル
-----------------
-NVE   : ``nve``
-NVT   : ``nvt_ber``, ``nvt_nhc``, ``nvt_bdp``, ``nvt_lan``, ``nvt_bao``, ``nvt_mttk``
-NPT   : ``npt_ber``, ``npt_scr``, ``npt_mttk``
-NPH   : ``nph_mttk``
+アンサンブルの指定方法
+----------------------
+* **文字列** — 標準アンサンブル (:data:`ALL_ENSEMBLES`) はそのまま名前で指定する。
+  NVE / NVT (6 種) / NPT (3 種) / NPH。
+* **オブジェクト** — それ以外 (QTB・NEMD 熱浴・TTM・PIMD・熱力学的積分・衝撃波) は
+  :mod:`gpumd_toolkit.inputs.ensembles` のクラスのインスタンスを渡す。
 
-熱浴・圧浴の時定数 (追加依頼 20260921-2)
------------------------------------------
+熱浴・圧浴の時定数
+------------------
 GPUMD の ``<T_coup>`` / ``<p_coup>`` / ``tperiod`` / ``pperiod`` はいずれも
 **時間刻みを単位とする無次元量** (:math:`\\tau/\\Delta t`) であって時間ではない。
 本モジュールでは無次元量をそのまま与えることも、``tau_T`` / ``tau_p`` に
 **fs** で与えて自動換算させることもできる。
 
-セル形状と変調軸 (追加依頼 20260921-3, 4)
--------------------------------------------
+セル形状と変調軸
+----------------
 * ``npt_ber`` / ``npt_scr`` は圧力成分の数でセルの動き方が決まる。
   1 成分 = 等方 (直交セル必須)、3 成分 = 直方晶 (直交セル必須)、
   6 成分 = 三斜晶 (任意形状のセルに対応)。:attr:`MDStage.cell_mode` で選ぶ。
@@ -34,10 +34,27 @@ GPUMD の ``<T_coup>`` / ``<p_coup>`` / ``tperiod`` / ``pperiod`` はいずれ�
 
 from __future__ import annotations
 
-import warnings
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Iterable, Mapping, Sequence
+
+from .dumps import DUMP_PROPERTIES, DumpSettings
+from .ensembles import (
+    CELL_MODES,
+    FROZEN_MODULUS,
+    MTTK_AXES,
+    MTTK_DIRECTIONS,
+    VOIGT_LABELS,
+    Ensemble,
+    coupling_from_tau,
+    mttk_axis,
+    mttk_direction_args,
+    normalize_axis,
+)
+from .modifiers import minimize as _minimize_line
+from .modifiers import potential as _potential_line
+from .modifiers import replicate as _replicate_line
+from .modifiers import velocity as _velocity_line
 
 __all__ = [
     "DumpSettings",
@@ -52,52 +69,17 @@ __all__ = [
     "MTTK_DIRECTIONS",
     "MTTK_AXES",
     "FROZEN_MODULUS",
+    "DUMP_PROPERTIES",
 ]
 
 NVT_ENSEMBLES = ("nvt_ber", "nvt_nhc", "nvt_bdp", "nvt_lan", "nvt_bao", "nvt_mttk")
 NPT_ENSEMBLES = ("npt_ber", "npt_scr", "npt_mttk")
 NPH_ENSEMBLES = ("nph_mttk",)
+#: 文字列で ``MDStage`` に渡せるアンサンブル
 ALL_ENSEMBLES = ("nve",) + NVT_ENSEMBLES + NPT_ENSEMBLES + NPH_ENSEMBLES
 
-#: ``npt_ber`` / ``npt_scr`` のセル自由度。成分数に対応する。
-CELL_MODES = {"iso": 1, "ortho": 3, "tri": 6}
-
-#: 6 成分指定の並び (GPUMD の順序)
-VOIGT_LABELS = ("xx", "yy", "zz", "yz", "xz", "xy")
-
-#: 軸名の別名 -> Voigt ラベル
-_AXIS_ALIASES = {
-    "x": "xx", "xx": "xx",
-    "y": "yy", "yy": "yy",
-    "z": "zz", "zz": "zz",
-    "yz": "yz", "zy": "yz",
-    "xz": "xz", "zx": "xz",
-    "xy": "xy", "yx": "xy",
-}
-
-#: ``npt_mttk`` のセル変形モード
-MTTK_DIRECTIONS = ("iso", "aniso", "tri")
-
-#: ``npt_mttk`` で個別に指定できる成分
-MTTK_AXES = ("x", "y", "z", "xy", "yz", "xz")
-
-#: この値より大きい弾性率を渡すと GPUMD はその成分を固定する (> 2000 GPa)
-FROZEN_MODULUS = 1.0e4
-
-
-def _normalize_axis(name: str) -> str:
-    key = str(name).strip().lower()
-    if key not in _AXIS_ALIASES:
-        raise ValueError(
-            f"未知の軸名 '{name}'。使用可能: x, y, z, yz, xz, xy (= xx, yy, zz, ...)"
-        )
-    return _AXIS_ALIASES[key]
-
-
-def _mttk_axis(name: str) -> str:
-    """Voigt ラベルを ``npt_mttk`` の軸名 (``x`` / ``y`` / ``z`` / 剪断) に直す。"""
-    voigt = _normalize_axis(name)
-    return {"xx": "x", "yy": "y", "zz": "z"}.get(voigt, voigt)
+_normalize_axis = normalize_axis
+_mttk_axis = mttk_axis
 
 
 def _bad_pressure(length: int):
@@ -114,96 +96,6 @@ def _mean(value: float | Sequence[float]) -> float:
     return sum(seq) / len(seq) if seq else 0.0
 
 
-def _scalar(value: float | Sequence[float]) -> float:
-    """静水圧としての代表値 (対角成分の平均)。"""
-    if isinstance(value, (int, float)):
-        return float(value)
-    seq = tuple(float(v) for v in value)
-    return sum(seq[:3]) / min(3, len(seq))
-
-#: dump_xyz で出力できる per-atom 量
-DUMP_PROPERTIES = (
-    "mass",
-    "velocity",
-    "force",
-    "potential",
-    "virial",
-    "charge",
-    "bec",
-    "group_labels",
-    "unwrapped_position",
-)
-
-
-def _fmt(value: Any) -> str:
-    if isinstance(value, bool):
-        return "1" if value else "0"
-    if isinstance(value, float):
-        return f"{value:g}"
-    return str(value)
-
-
-@dataclass
-class DumpSettings:
-    """1 ステージ分の出力設定。
-
-    Parameters
-    ----------
-    thermo_interval
-        ``thermo.out`` への出力間隔 (ステップ)。``None`` で出力しない。
-    traj_interval
-        トラジェクトリ (``dump_xyz``) の出力間隔。``None`` で出力しない。
-        mission.md の「任意ステップあたりで保存」はここで指定する。
-    traj_file
-        トラジェクトリのファイル名。
-    traj_properties
-        トラジェクトリに含める per-atom 量。座標は常に出力される。
-    traj_precision
-        ``'single'`` (既定, 9 桁) または ``'double'`` (17 桁)。
-    restart_interval
-        ``restart.xyz`` の出力間隔。``None`` で出力しない。
-    extra
-        そのまま ``run.in`` に差し込む追加キーワード行。
-        例: ``["compute_msd 10 200", "compute_rdf 100 100 5.0"]``
-    """
-
-    thermo_interval: int | None = 100
-    traj_interval: int | None = 1000
-    traj_file: str = "dump.xyz"
-    traj_properties: Sequence[str] = ("velocity", "force", "potential")
-    traj_precision: str = "single"
-    restart_interval: int | None = None
-    extra: Sequence[str] = field(default_factory=tuple)
-
-    def __post_init__(self) -> None:
-        bad = [p for p in self.traj_properties if p not in DUMP_PROPERTIES]
-        if bad:
-            raise ValueError(
-                f"dump_xyz で未対応の property です: {bad}\n"
-                f"  使用可能: {', '.join(DUMP_PROPERTIES)}"
-            )
-        if self.traj_precision not in ("single", "double"):
-            raise ValueError("traj_precision は 'single' か 'double' です。")
-
-    def to_lines(self) -> list[str]:
-        lines: list[str] = []
-        if self.thermo_interval:
-            lines.append(f"dump_thermo {int(self.thermo_interval)}")
-        if self.traj_interval:
-            props = " ".join(self.traj_properties)
-            precision = (
-                "" if self.traj_precision == "single" else f" precision {self.traj_precision}"
-            )
-            lines.append(
-                f"dump_xyz {int(self.traj_interval)} {self.traj_file}{precision}"
-                + (f" {props}" if props else "")
-            )
-        if self.restart_interval:
-            lines.append(f"dump_restart {int(self.restart_interval)}")
-        lines.extend(self.extra)
-        return lines
-
-
 @dataclass
 class MDStage:
     """1 つの ``run`` ブロック。
@@ -211,7 +103,8 @@ class MDStage:
     Parameters
     ----------
     ensemble
-        :data:`ALL_ENSEMBLES` のいずれか。
+        :data:`ALL_ENSEMBLES` のいずれかの名前、または
+        :class:`gpumd_toolkit.inputs.ensembles.Ensemble` のインスタンス。
     steps
         ステップ数。
     T_start, T_end
@@ -262,11 +155,13 @@ class MDStage:
         ``ensemble <name> ...`` の引数を完全に手書きしたい場合に指定する。
     pre_commands / post_commands
         ``run`` の直前/直後に差し込む任意の行。
+        :mod:`gpumd_toolkit.inputs.computes` や
+        :mod:`gpumd_toolkit.inputs.modifiers` の戻り値を並べる。
     label
         ログ・解析でステージを識別する名前。
     """
 
-    ensemble: str
+    ensemble: str | Ensemble
     steps: int
     T_start: float | None = None
     T_end: float | None = None
@@ -290,10 +185,18 @@ class MDStage:
     label: str = ""
 
     def __post_init__(self) -> None:
+        if isinstance(self.ensemble, Ensemble):
+            if self.steps <= 0:
+                raise ValueError("steps は正の整数である必要があります。")
+            self.steps = int(self.steps)
+            if not self.label:
+                self.label = self.ensemble.describe()
+            return
         if self.ensemble not in ALL_ENSEMBLES and self.raw_ensemble_args is None:
             raise ValueError(
                 f"未知のアンサンブル '{self.ensemble}'。"
-                f" 使用可能: {', '.join(ALL_ENSEMBLES)}"
+                f" 文字列で指定できるのは {', '.join(ALL_ENSEMBLES)} です。"
+                " それ以外は gpumd_toolkit.inputs.ensembles のクラスを使ってください。"
             )
         if self.steps <= 0:
             raise ValueError("steps は正の整数である必要があります。")
@@ -314,6 +217,19 @@ class MDStage:
             self.free_axes = tuple(_normalize_axis(a) for a in self.free_axes)
         if not self.label:
             self.label = self._auto_label()
+
+    # ------------------------------------------------------------------ 名前
+    @property
+    def ensemble_name(self) -> str:
+        """``ensemble`` がオブジェクトでも文字列の名前を返す。"""
+        if isinstance(self.ensemble, Ensemble):
+            return self.ensemble.name
+        return self.ensemble
+
+    @property
+    def ensemble_spec(self) -> Ensemble | None:
+        """オブジェクト指定のアンサンブル (文字列指定なら ``None``)。"""
+        return self.ensemble if isinstance(self.ensemble, Ensemble) else None
 
     def _auto_label(self) -> str:
         if self.ensemble == "nve":
@@ -341,22 +257,7 @@ class MDStage:
     def _coupling(
         self, tau_fs: float | None, fallback: float, time_step: float | None, name: str
     ) -> float:
-        """時定数 [fs] を GPUMD の無次元カップリング定数 (tau/dt) に直す。"""
-        if tau_fs is None:
-            return float(fallback)
-        dt = self.resolved_time_step(time_step)
-        if dt is None or dt <= 0:
-            raise ValueError(
-                f"{name} を fs で指定するには time_step が必要です。"
-                " MDStage(time_step=...) か RunInputBuilder(time_step=...) を設定してください。"
-            )
-        value = float(tau_fs) / float(dt)
-        if value < 1.0:
-            raise ValueError(
-                f"{name}={tau_fs} fs は時間刻み {dt} fs に対して短すぎます"
-                f" (GPUMD は tau/dt >= 1 を要求)。"
-            )
-        return value
+        return coupling_from_tau(tau_fs, fallback, self.resolved_time_step(time_step), name)
 
     def temperature_coupling(self, time_step: float | None = None) -> float:
         """このステージの :math:`\\tau_T/\\Delta t`。"""
@@ -364,7 +265,9 @@ class MDStage:
 
     def pressure_coupling(self, time_step: float | None = None) -> float:
         """このステージの :math:`\\tau_p/\\Delta t` (ber/scr なら p_coup、mttk なら pperiod)。"""
-        fallback = self.p_period if self.ensemble.endswith("_mttk") else self.p_coup
+        fallback = (
+            self.p_period if self.ensemble_name.endswith("_mttk") else self.p_coup
+        )
         return self._coupling(self.tau_p, fallback, time_step, "tau_p")
 
     # ------------------------------------------------------- 圧力成分とセル自由度
@@ -440,48 +343,13 @@ class MDStage:
         direction = self.mttk_direction
         if self.free_axes is not None and direction in MTTK_DIRECTIONS:
             direction = tuple(_mttk_axis(a) for a in self.free_axes)
-
-        start = self.pressure if self.pressure is not None else 0.0
-        end = self.pressure_end if self.pressure_end is not None else start
-
-        # 1) iso / aniso / tri : 静水圧をひとつだけ取る
-        if isinstance(direction, str) and direction in MTTK_DIRECTIONS:
-            p1, p2 = _scalar(start), _scalar(end)
-            return f"{direction} {p1:g} {p2:g}"
-
-        # 2) 軸ごとの指定
-        if isinstance(direction, Mapping):
-            pairs = [
-                (_mttk_axis(axis), float(value), float(value))
-                for axis, value in direction.items()
-            ]
-        else:
-            axes = (direction,) if isinstance(direction, str) else tuple(direction)
-            axes = tuple(_mttk_axis(a) for a in axes)
-            starts = self._axis_values(start, axes)
-            ends = self._axis_values(end, axes)
-            pairs = list(zip(axes, starts, ends))
-        if not pairs:
-            raise ValueError("npt_mttk の direction が空です。")
-        return " ".join(f"{axis} {p1:g} {p2:g}" for axis, p1, p2 in pairs)
-
-    @staticmethod
-    def _axis_values(
-        value: float | Sequence[float], axes: Sequence[str]
-    ) -> tuple[float, ...]:
-        if isinstance(value, (int, float)):
-            return tuple(float(value) for _ in axes)
-        seq = tuple(float(v) for v in value)
-        if len(seq) == len(axes):
-            return seq
-        if len(seq) in (3, 6):  # Voigt 並びから該当軸を拾う
-            return tuple(seq[VOIGT_LABELS.index(_normalize_axis(a))] for a in axes)
-        raise ValueError(
-            f"pressure の成分数 {len(seq)} が direction の軸数 {len(axes)} と合いません。"
-        )
+        return mttk_direction_args(direction, self.pressure, self.pressure_end)
 
     # ------------------------------------------------------------------ 出力
     def ensemble_line(self, time_step: float | None = None) -> str:
+        spec = self.ensemble_spec
+        if spec is not None:
+            return spec.line(self.resolved_time_step(time_step))
         if self.raw_ensemble_args is not None:
             return f"ensemble {self.ensemble} {self.raw_ensemble_args}".strip()
         if self.ensemble == "nve":
@@ -536,6 +404,8 @@ class MDStage:
 
     def describe_cell_control(self, time_step: float | None = None) -> str:
         """このステージがセルをどう動かすかを 1 行で説明する。"""
+        if self.ensemble_spec is not None:
+            return self.ensemble_spec.describe()
         if self.ensemble in NVT_ENSEMBLES or self.ensemble == "nve":
             return "セル固定"
         if self.ensemble.endswith("_mttk"):
@@ -551,10 +421,56 @@ class MDStage:
     def with_dump(self, dump: DumpSettings) -> "MDStage":
         return replace(self, dump=dump)
 
+    def with_commands(self, *lines: str) -> "MDStage":
+        """``pre_commands`` に行を足した複製を返す。"""
+        return replace(self, pre_commands=tuple(self.pre_commands) + tuple(lines))
+
+    def metadata(self) -> dict:
+        """``metadata.json`` に残すための辞書表現。"""
+        data = {
+            "label": self.label,
+            "ensemble": self.ensemble_name,
+            "steps": self.steps,
+        }
+        spec = self.ensemble_spec
+        if spec is not None:
+            data.update(spec.metadata())
+        else:
+            data.update(
+                {
+                    "T_start": self.T_start,
+                    "T_end": self.T_end,
+                    "pressure": self.pressure,
+                    "tau_T_fs": self.tau_T,
+                    "tau_p_fs": self.tau_p,
+                }
+            )
+        if self.pre_commands:
+            data["pre_commands"] = list(self.pre_commands)
+        if self.post_commands:
+            data["post_commands"] = list(self.post_commands)
+        return data
+
 
 @dataclass
 class RunInputBuilder:
     """``run.in`` 全体を組み立てる。
+
+    Parameters
+    ----------
+    potential
+        ポテンシャルファイル。複数渡すと ``potential`` 行が複数並ぶ
+        (committee / ``dump_observer`` / ``active`` 用)。
+        1 つのポテンシャルが複数引数を要るとき (DP など) は
+        ``[["dp.txt", "model.pb"]]`` のように入れ子で渡す。
+    replicate
+        ``(na, nb, nc)``。``potential`` より前に ``replicate`` 行を書く。
+    minimize
+        ``(method, force_tolerance, max_steps)`` または
+        ``(method, force_tolerance, max_steps, box_change, hydrostatic_strain)``。
+    preamble
+        ``potential`` / ``time_step`` の後、最初のステージの前に差し込む行。
+        ``dftd3`` / ``kspace`` / ``correct_velocity`` などを置く。
 
     Examples
     --------
@@ -568,11 +484,14 @@ class RunInputBuilder:
     time_step: float = 1.0
     initial_temperature: float | None = None
     velocity_seed: int | None = None
-    minimize: tuple[str, float, int] | None = None
+    minimize: tuple | None = None
     stages: list[MDStage] = field(default_factory=list)
     default_dump: DumpSettings = field(default_factory=DumpSettings)
     header_comments: Sequence[str] = field(default_factory=tuple)
     preamble: Sequence[str] = field(default_factory=tuple)
+    replicate: Sequence[int] | None = None
+    max_distance_per_step: float | None = None
+    actions: Sequence[str] = field(default_factory=tuple)
 
     # ------------------------------------------------------------------ 構築
     def add_stage(self, stage: MDStage) -> "RunInputBuilder":
@@ -584,39 +503,100 @@ class RunInputBuilder:
             self.add_stage(stage)
         return self
 
+    def add_preamble(self, *lines: str) -> "RunInputBuilder":
+        """``dftd3`` / ``kspace`` / ``correct_velocity`` などを先頭に足す。"""
+        self.preamble = tuple(self.preamble) + tuple(lines)
+        return self
+
+    def add_action(self, *lines: str) -> "RunInputBuilder":
+        """``run`` を伴わずその場で実行されるキーワードを足す。
+
+        ``compute_cohesive`` / ``compute_elastic`` / ``compute_phonon`` は
+        GPUMD が構文解析した時点で実行されるので、``ensemble`` と ``run`` の
+        ブロックを必要としない。
+        """
+        self.actions = tuple(self.actions) + tuple(lines)
+        return self
+
     def set_minimize(
-        self, method: str = "fire", force_tolerance: float = 1e-4, max_steps: int = 1000
+        self,
+        method: str = "fire",
+        force_tolerance: float = 1e-4,
+        max_steps: int = 1000,
+        *,
+        box_change: bool = False,
+        hydrostatic_strain: bool = False,
     ) -> "RunInputBuilder":
         if method not in ("fire", "sd"):
             raise ValueError("minimize の method は 'fire' か 'sd' です。")
-        self.minimize = (method, force_tolerance, int(max_steps))
+        self.minimize = (
+            method,
+            force_tolerance,
+            int(max_steps),
+            bool(box_change),
+            bool(hydrostatic_strain),
+        )
         return self
 
     # ------------------------------------------------------------------ 出力
     def potential_lines(self) -> list[str]:
+        """``potential`` 行 (複数ポテンシャルにも対応)。"""
         if isinstance(self.potential, (str, Path)):
-            return [f"potential {self.potential}"]
-        return [f"potential {' '.join(str(p) for p in self.potential)}"]
+            return [_potential_line(str(self.potential))]
+        items = list(self.potential)
+        if items and all(isinstance(item, (str, Path)) for item in items):
+            # DP のように 1 つのポテンシャルが複数引数を取る場合との区別が
+            # つかないため、従来どおり 1 行にまとめる。
+            return [_potential_line([str(item) for item in items])]
+        return [
+            _potential_line(item if isinstance(item, (str, Path)) else [str(v) for v in item])
+            for item in items
+        ]
+
+    @property
+    def n_potentials(self) -> int:
+        return len(self.potential_lines())
 
     def build(self) -> str:
-        if not self.stages:
-            raise ValueError("ステージが 1 つもありません。add_stage() を呼んでください。")
+        if not self.stages and not self.actions:
+            raise ValueError(
+                "ステージが 1 つもありません。add_stage() か add_action() を呼んでください。"
+            )
         lines: list[str] = []
         for comment in self.header_comments:
             lines.append(f"# {comment}")
         if self.header_comments:
             lines.append("")
+        if self.replicate is not None:
+            na, nb, nc = (int(n) for n in self.replicate)
+            lines.append(_replicate_line(na, nb, nc))
         lines.extend(self.potential_lines())
         if self.initial_temperature is not None:
-            seed = f" seed {self.velocity_seed}" if self.velocity_seed is not None else ""
-            lines.append(f"velocity {self.initial_temperature:g}{seed}")
-        lines.append(f"time_step {self.time_step:g}")
+            lines.append(_velocity_line(self.initial_temperature, self.velocity_seed))
+        if self.max_distance_per_step is not None:
+            lines.append(f"time_step {self.time_step:g} {self.max_distance_per_step:g}")
+        else:
+            lines.append(f"time_step {self.time_step:g}")
         lines.extend(self.preamble)
         if self.minimize is not None:
-            method, tol, steps = self.minimize
+            method, tol, steps = self.minimize[0], self.minimize[1], self.minimize[2]
+            box_change = bool(self.minimize[3]) if len(self.minimize) > 3 else False
+            hydrostatic = bool(self.minimize[4]) if len(self.minimize) > 4 else False
             lines.append("")
             lines.append("# --- energy minimization ---")
-            lines.append(f"minimize {method} {tol:g} {steps}")
+            lines.append(
+                _minimize_line(
+                    method,
+                    tol,
+                    steps,
+                    box_change=box_change,
+                    hydrostatic_strain=hydrostatic,
+                )
+            )
+        if self.actions:
+            lines.append("")
+            lines.append("# --- standalone actions (run 不要) ---")
+            lines.extend(self.actions)
         time_step = self.time_step
         for stage in self.stages:
             lines.append("")

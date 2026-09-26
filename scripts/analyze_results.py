@@ -8,7 +8,7 @@ python scripts/analyze_results.py runs/si_300K
 
 # 平衡化の切り捨て割合を変え、トラジェクトリも変換
 python scripts/analyze_results.py runs/si_300K --drop 0.5 \
-    --convert xdatcar traj --stride 5
+    --convert xyz xdatcar --stride 5
 
 # 複数ディレクトリの温度を 1 枚に重ねる
 python scripts/analyze_results.py runs/T300K runs/T600K runs/T900K \

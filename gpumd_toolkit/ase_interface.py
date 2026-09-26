@@ -287,6 +287,9 @@ class ASEMDRunner:
     #: 構造読み込みで高速経路 (専用パーサ + xyz キャッシュ) を使うか
     fast_read: bool = True
 
+    #: 直近の run_md が書いたトラジェクトリ
+    trajectory_path: Path | None = field(default=None, init=False, repr=False)
+
     def __post_init__(self) -> None:
         if not isinstance(self.atoms, Atoms):
             self.atoms = StructureHandler.read(self.atoms, fast=self.fast_read)
@@ -375,7 +378,7 @@ class ASEMDRunner:
         compressibility_au: float | None = None,
         npt_axes: Sequence[str] | None = None,
         mask: Sequence[int] | np.ndarray | None = None,
-        trajectory: str | None = "md.traj",
+        trajectory: str | None = "md.xyz",
         seed: int | None = None,
     ):
         """ASE の積分器 (dynamics) を組み立てて返す。
@@ -418,7 +421,15 @@ class ASEMDRunner:
             from ase.md.npt import NPT
 
         dt = time_step * units.fs
-        traj_path = str(self.workdir / trajectory) if trajectory else None
+        # ASE の dynamics(trajectory=...) は .traj (ASE 専用バイナリ) しか書けない。
+        # 拡張 XYZ で残したい場合は run_md 側でライタを attach するので、
+        # ここでは .traj を指定されたときだけ ASE に任せる。
+        self._trajectory_file = str(self.workdir / trajectory) if trajectory else None
+        traj_path = (
+            self._trajectory_file
+            if self._trajectory_file and self._trajectory_file.endswith(".traj")
+            else None
+        )
         if mask is None and npt_axes is not None:
             mask = axes_to_mask(npt_axes)
         if compressibility_au is None:
@@ -541,7 +552,7 @@ class ASEMDRunner:
         steps: int = 1000,
         time_step: float = 1.0,
         log_interval: int = 10,
-        trajectory: str | None = "md.traj",
+        trajectory: str | None = "md.xyz",
         seed: int | None = None,
         initialize_velocities: bool = True,
         **dynamics_kwargs,
@@ -585,6 +596,21 @@ class ASEMDRunner:
 
         self.log = []
         n_atoms = len(self.atoms)
+        self.trajectory_path: Path | None = (
+            Path(self._trajectory_file) if self._trajectory_file else None
+        )
+        if self.trajectory_path and self.trajectory_path.suffix != ".traj":
+            # 拡張 XYZ に追記していく (OVITO / VESTA / ASE からそのまま開ける)
+            self.trajectory_path.unlink(missing_ok=True)
+
+            def write_frame() -> None:
+                from ase.io import write as ase_write
+
+                ase_write(
+                    str(self.trajectory_path), self.atoms, format="extxyz", append=True
+                )
+
+            dyn.attach(write_frame, interval=log_interval)
 
         def record() -> None:
             atoms = self.atoms
@@ -667,11 +693,30 @@ class ASEMDRunner:
         return path
 
     def write_trajectory(self, output: Path | str, *, fmt: str | None = None, **kwargs) -> Path:
-        """ASE の ``.traj`` を XDATCAR などへ変換する。"""
+        """MD で書いたトラジェクトリを XDATCAR などへ変換する。
+
+        ``run_md(trajectory=...)`` の既定は ``md.xyz`` (拡張 XYZ) なので、
+        そのままでも OVITO / VESTA / ASE から開ける。
+        XDATCAR や POSCAR が要るときだけこれを使う。
+        """
         from .trajectory import TrajectoryConverter
 
-        source = self.workdir / "md.traj"
+        source = getattr(self, "trajectory_path", None) or (self.workdir / "md.xyz")
+        source = Path(source)
         if not source.is_file():
-            raise FileNotFoundError(f"{source} がありません。trajectory= を有効にして実行してください。")
-        converter = TrajectoryConverter(source, format="traj")
+            raise FileNotFoundError(
+                f"{source} がありません。run_md(trajectory=...) を有効にして実行してください。"
+            )
+        converter = TrajectoryConverter(
+            source, format="traj" if source.suffix == ".traj" else "extxyz"
+        )
         return converter.convert(output, fmt=fmt, **kwargs)
+
+    def trajectory(self):
+        """書き出したトラジェクトリの :class:`~gpumd_toolkit.trajectory.TrajectoryConverter`。"""
+        from .trajectory import TrajectoryConverter
+
+        source = Path(getattr(self, "trajectory_path", None) or (self.workdir / "md.xyz"))
+        return TrajectoryConverter(
+            source, format="traj" if source.suffix == ".traj" else "extxyz"
+        )

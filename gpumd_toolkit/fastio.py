@@ -124,7 +124,7 @@ def _frame_from_block(comment: str, body: list[str], n_atoms: int) -> Atoms:
             symbols = [str(s) for s in block[:, 0]]
         elif name == "pos":
             positions = block.astype(float)
-        elif kind in ("R", "I") and name in ("vel", "mass", "charge", "force", "forces"):
+        elif kind in ("R", "I"):
             arrays[name] = block.astype(float if kind == "R" else int)
 
     if symbols is None or positions is None:
@@ -139,6 +139,27 @@ def _frame_from_block(comment: str, body: list[str], n_atoms: int) -> Atoms:
         from ase import units
 
         atoms.set_velocities(arrays["vel"] * (1.0 / units.fs))
+    # 残りの per-atom 量 (force / virial / energy_atom / group など) もそのまま持たせる
+    for name, block in arrays.items():
+        if name in ("vel", "mass", "charge"):
+            continue
+        key = "forces" if name == "force" else name
+        atoms.arrays[key] = block[:, 0] if block.shape[1] == 1 else block
+    # フレーム全体の量 (energy / virial / stress / time) を info に入れる
+    for key, value in meta.items():
+        if key in ("lattice", "pbc", "properties"):
+            continue
+        try:
+            numbers = np.fromstring(value, sep=" ")
+        except ValueError:  # pragma: no cover - 数値でない属性
+            atoms.info[key] = value
+            continue
+        if numbers.size == 0:
+            atoms.info[key] = value
+        elif numbers.size == 1:
+            atoms.info[key] = float(numbers[0])
+        else:
+            atoms.info[key] = numbers
     return atoms
 
 
