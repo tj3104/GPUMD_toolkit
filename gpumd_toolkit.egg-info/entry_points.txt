@@ -1,2 +1,0 @@
-[console_scripts]
-gpumd-toolkit = gpumd_toolkit.cli:main

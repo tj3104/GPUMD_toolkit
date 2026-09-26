@@ -446,6 +446,58 @@ print(mc2.concentrations())
 > GPUMD の MCMD は周期方向のセル厚みが `2.5*(rc+1)` (NEP の radial cutoff が 6 Å なら
 > 17.5 Å) より大きいことを要求する。`check_box_size()` が実行前に警告する。
 
+#### GPUMD だけで回す MCMC (原子交換のみ) — `mcmc()`
+
+GPUMD の `mc` は各 MD ステップの位置更新と力計算の間に MC を挟む。`mcmc()` は
+`time_step 0` の NVE ステージに `mc canonical 1 <trials_per_call> ...` を付けるので、
+座標は一切動かず原子種の交換 MC だけが GPU 上で回る (`MetropolisMC` よりはるかに速い)。
+
+```python
+mc = MonteCarloCalculation("alloy.xyz", "nep.txt", "runs/mcmc_gpu", min_cell_length=20.0)
+mc.mcmc(temperature=1500, temperature_end=300,       # 1 呼び出しごとに線形に降温
+        trials=200000, trials_per_call=2000)         # run 100 (= 100 回の mc 呼び出し)
+mc.run()
+mc.mcmd()                            # 呼び出しごとの受理率
+mc.result.thermo()                   # thermo.out のポテンシャルエネルギー = MCMC のエネルギー推移
+```
+
+- 各呼び出しで力計算が 1 回走るので `trials_per_call` は大きめ (1000 以上) が効率的。
+- 後続のステージで `time_step` を指定しなければ、既定の時間刻みに自動で戻す。
+- 原子変位の MC は無い。変位も必要なら下の `MetropolisMC` を使う。
+- CLI: `gpumd-toolkit mc --mode mcmc --steps <総試行数> --mc-trials <1 呼び出しあたり>`
+
+#### 純粋な Metropolis MC (MCMC) — `MetropolisMC`
+
+GPUMD 本体の `mc` には原子変位の MC 試行は無い (原子交換だけなら上の `mcmc()`)。そこで ASE calculator
+(NEP の `cpu` / `pynep` / `gpu`、または任意の ASE calculator) でエネルギーを評価し、
+Python 側で Metropolis 法を回すクラスを用意している。
+
+| 試行 | 内容 |
+|------|------|
+| `displace` | ランダムな 1 原子を各成分 ±`max_displacement` Å の一様乱数で動かす |
+| `swap` | 元素の異なる 2 原子の位置を入れ替える (組成は保存) |
+
+```python
+from gpumd_toolkit import MetropolisMC
+
+mc = MetropolisMC("alloy.xyz", model="nep.txt", backend="cpu",
+                  workdir="runs/mcmc", seed=0)
+mc.run(steps=20000, temperature=1500, temperature_end=300,   # 焼きなまし
+       moves={"displace": 0.5, "swap": 0.5}, max_displacement=0.1,
+       log_interval=200, trajectory_interval=1000)            # runs/mcmc/mc.xyz
+print(mc.acceptance_ratio("displace"), mc.acceptance_ratio("swap"))
+mc.save_log()                        # mc.csv
+mc.plot()                            # mc.png (エネルギー・受理率・温度)
+best = mc.lowest_energy_structure()  # 訪れた中で最低エネルギーの構造
+```
+
+- 1 試行ごとに全エネルギーを 1 回計算するので、数百原子までが目安
+  (54 原子の NEP・CPU で 2000 試行 ≈ 4 秒)。
+- `gpu` バックエンドは試行ごとに gpumd をファイル経由で起動するため非常に遅い。`cpu` を推奨。
+- `adapt_displacement=True` で受理率が `target_acceptance` に近づくよう変位幅を自動調整する
+  (詳細釣り合いが崩れるので平衡化の段階だけで使う)。
+- `run()` は何度呼んでも続きから回る (平衡化 → 本計算の 2 段に分けられる)。
+
 ### 2.7.4 熱輸送
 
 | 手法 | メソッド | 出力 |

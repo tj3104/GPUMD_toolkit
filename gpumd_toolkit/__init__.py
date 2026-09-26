@@ -34,6 +34,8 @@ GPUMD が ``run.in`` で提供する機能を、分類ごとのワークフロ�
     DPMD の example を実行し、予実 (期待値 vs 実測値) をとる。
 :class:`~gpumd_toolkit.ase_interface.ASEMDRunner`
     ASE の calculator / 積分器で NEP を使う (CPU 版 NEP_CPU・pyNEP にも対応)。
+:class:`~gpumd_toolkit.mcmc.MetropolisMC`
+    MD を使わない純粋な Metropolis MC (変位 / 原子交換)。GPUMD 本体には無い機能。
 
 補助
 ----
@@ -75,6 +77,7 @@ from .fastio import (
 from .groups import GroupingScheme, NEMDLayout, nemd_layout
 from .inputs import DumpSettings, MDStage, RunInputBuilder
 from .md import GPUMDCalculation, GPUMDResult
+from .mcmc import MetropolisMC
 from .outputs import OutputReader
 from .parallel import JobSpec, ParallelRunner
 from .postprocess import ElasticModuli, elastic_moduli
@@ -115,6 +118,7 @@ __all__ = [
     "JobSpec",
     "MDAnalyzer",
     "MDStage",
+    "MetropolisMC",
     "NEMDLayout",
     "OutputReader",
     "ParallelRunner",

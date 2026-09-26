@@ -193,7 +193,13 @@ def cmd_mc(args) -> int:
 
     calc = MonteCarloCalculation(**_common_kwargs(args))
     species = dict(zip(args.species, args.values)) if args.species else {}
-    if args.mode == "canonical":
+    if args.mode == "mcmc":
+        # MD なしの純粋な MCMC: --steps を総試行数、--mc-trials を 1 呼び出しあたりの試行数とみなす
+        calc.mcmc(
+            temperature=args.temperature, temperature_end=args.temperature_end,
+            trials=args.steps, trials_per_call=args.mc_trials,
+        )
+    elif args.mode == "canonical":
         calc.canonical(
             temperature=args.temperature, temperature_end=args.temperature_end,
             steps=args.steps, md_steps=args.md_steps, mc_trials=args.mc_trials,
@@ -525,7 +531,8 @@ def build_parser() -> argparse.ArgumentParser:
     # --- mc ---
     p = sub.add_parser("mc", help="4. Monte Carlo (組成・配置サンプリング)")
     _add_common(p)
-    p.add_argument("--mode", default="canonical", choices=["canonical", "sgc", "vcsgc"])
+    p.add_argument("--mode", default="canonical", choices=["canonical", "sgc", "vcsgc", "mcmc"],
+                   help="mcmc は time_step 0 で MD を止め原子交換だけを行う")
     p.add_argument("--temperature", type=float, default=1000.0)
     p.add_argument("--temperature-end", type=float, default=None)
     p.add_argument("--steps", type=int, default=100000)

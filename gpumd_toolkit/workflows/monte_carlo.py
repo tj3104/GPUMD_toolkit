@@ -11,6 +11,10 @@ GPUMD の ``mc`` キーワードは MD の途中に MC 試行を挟み、原子�
 分散拘束 SGC (``vcsgc``)        二相共存領域でも組成を安定にサンプリングできる
 ============================== ==================================================
 
+``mcmc`` は ``time_step 0`` の NVE で MD を止め、GPUMD の ``mc canonical`` だけを
+回す純粋な MCMC (原子種の交換のみ)。ASE calculator で回す
+:class:`~gpumd_toolkit.mcmc.MetropolisMC` よりはるかに速い。
+
 Examples
 --------
 >>> from gpumd_toolkit.workflows import MonteCarloCalculation
@@ -22,13 +26,17 @@ Examples
 
 from __future__ import annotations
 
+import math
 import warnings
+from dataclasses import replace
 from pathlib import Path
 from typing import Mapping, Sequence
 
 import pandas as pd
 
 from ..inputs import modifiers
+from ..inputs.builder import MDStage
+from ..inputs.dumps import DumpSettings
 from ..md import GPUMDCalculation
 from ..outputs import read_mcmd
 from ..structure import StructureHandler
@@ -47,6 +55,16 @@ class MonteCarloCalculation(GPUMDCalculation):
         super().__init__(*args, **kwargs)
         #: MC で扱う元素の並び (``mcmd.out`` の列名に使う)
         self.mc_species: list[str] = []
+        #: 直前のステージが ``mcmc`` (time_step 0) か
+        self._after_mcmc = False
+
+    def add_stage(self, stage: MDStage) -> "MonteCarloCalculation":
+        # mcmc の time_step 0 は GPUMD では次の run に引き継がれるので、
+        # 後続ステージが時間刻みを指定していなければ既定値に戻す
+        if self._after_mcmc and stage.time_step is None:
+            stage = replace(stage, time_step=self.builder.time_step)
+        self._after_mcmc = False
+        return super().add_stage(stage)
 
     def check_box_size(self, *, strict: bool = True) -> dict[str, float]:
         """MCMD が要求するセルサイズを満たしているか確認する。
@@ -153,6 +171,66 @@ class MonteCarloCalculation(GPUMDCalculation):
             barostat=barostat,
             stage_kwargs=stage_kwargs,
         )
+
+    def mcmc(
+        self,
+        *,
+        temperature: float,
+        trials: int,
+        trials_per_call: int = 1000,
+        temperature_end: float | None = None,
+        group: Sequence[int] | None = None,
+        thermo_interval: int | None = 1,
+        traj_interval: int | None = None,
+        traj_properties: Sequence[str] = ("potential",),
+    ) -> "MonteCarloCalculation":
+        """MD を止めて原子種の交換だけを行う純粋な MCMC (カノニカル)。
+
+        ``time_step 0`` の NVE ステージに ``mc canonical 1 <trials_per_call> ...``
+        を付ける。GPUMD は各 MD ステップの位置更新と力計算の間に MC を挟むが、
+        時間刻みが 0 なので座標は一切動かず、MC の交換だけが効く。
+
+        Parameters
+        ----------
+        trials
+            交換試行の総数。``trials_per_call`` の倍数に切り上げる。
+        trials_per_call
+            1 回の ``mc`` 呼び出し (= 1 MD ステップ) あたりの試行数。
+            各ステップで力計算が 1 回走るので、大きいほど無駄が少ない。
+            ``mcmd.out`` の受理率・温度の更新・出力はこの単位になる。
+        temperature, temperature_end
+            MC の温度 [K]。``temperature_end`` を与えると呼び出しごとに線形に変わる。
+        thermo_interval, traj_interval
+            ``thermo.out`` / ``dump.xyz`` の出力間隔 [呼び出し回数]。
+            ``thermo.out`` のポテンシャルエネルギーがそのまま MCMC のエネルギー推移になる。
+            ``traj_interval`` の既定は全体で約 10 フレーム。
+        """
+        if trials <= 0 or trials_per_call <= 0:
+            raise ValueError("trials と trials_per_call は正の整数です。")
+        self.check_box_size(strict=False)
+        calls = math.ceil(trials / trials_per_call)
+        if traj_interval is None:
+            traj_interval = max(1, calls // 10)
+        line = modifiers.mc_canonical(
+            1, trials_per_call, temperature, temperature_end, group=group
+        )
+        T_end = temperature if temperature_end is None else temperature_end
+        stage = MDStage(
+            "nve",
+            steps=calls,
+            T_start=temperature,  # velocity 行用 (dt=0 なので運動には効かない)
+            time_step=0.0,
+            dump=DumpSettings(
+                thermo_interval=thermo_interval,
+                traj_interval=traj_interval,
+                traj_properties=tuple(traj_properties),
+            ),
+            pre_commands=(line,),
+            label=f"MCMC canonical {temperature:g}->{T_end:g} K ({calls * trials_per_call} trials)",
+        )
+        self.add_stage(stage)
+        self._after_mcmc = True
+        return self
 
     def semi_grand_canonical(
         self,
