@@ -286,6 +286,8 @@ class ASEMDRunner:
     calculator: Calculator | None = None
     #: 構造読み込みで高速経路 (専用パーサ + xyz キャッシュ) を使うか
     fast_read: bool = True
+    #: relax / run_md の後に最終構造を ``final.xyz`` と ``CONTCAR`` に書くか
+    save_final_structure: bool = True
 
     #: 直近の run_md が書いたトラジェクトリ
     trajectory_path: Path | None = field(default=None, init=False, repr=False)
@@ -358,6 +360,8 @@ class ASEMDRunner:
             target = FrechetCellFilter(self.atoms)
         dyn = optimizers[optimizer](target, logfile=str(self.workdir / "relax.log"))
         dyn.run(fmax=fmax, steps=steps)
+        if self.save_final_structure:
+            StructureHandler.write_final(self.atoms, self.workdir)
         return self.atoms
 
     # ------------------------------------------------------------------ MD
@@ -649,6 +653,8 @@ class ASEMDRunner:
                     break
                 dyn.run(remaining)
                 done += remaining
+        if self.save_final_structure:
+            StructureHandler.write_final(self.atoms, self.workdir)
         return self.atoms
 
     # ------------------------------------------------------------------ 出力

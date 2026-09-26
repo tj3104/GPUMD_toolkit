@@ -96,6 +96,36 @@ def _mean(value: float | Sequence[float]) -> float:
     return sum(seq) / len(seq) if seq else 0.0
 
 
+def _ensure_final_restart(lines: list[str], steps: int) -> list[str]:
+    """ステージの行に、最終ステップで ``restart.xyz`` を書く ``dump_restart`` を入れる。
+
+    GPUMD は ``(step + 1) % interval == 0`` のステップで ``restart.xyz`` を上書きするので、
+    間隔がステップ数を割り切れば最終構造が残る。割り切れない既存の指定は置き換える
+    (``dump_restart`` は 1 つの run に 1 つしか書けない)。
+
+    ``deposit`` があると GPUMD は run を deposit 間隔ごとの小さな run に分けて回すので、
+    その間隔で割り切れる値にする。
+    """
+    import math
+
+    lines = list(lines)
+    segment = steps
+    for line in lines:
+        tokens = line.split()
+        if tokens[:1] == ["deposit"] and len(tokens) > 1 and tokens[1].isdigit():
+            segment = math.gcd(steps, int(tokens[1]))
+    for i, line in enumerate(lines):
+        tokens = line.split()
+        if tokens[:1] == ["dump_restart"]:
+            if len(tokens) > 1 and tokens[1].isdigit() and segment % int(tokens[1]) == 0:
+                return lines
+            del lines[i]
+            break
+    run_index = max(i for i, line in enumerate(lines) if line.split()[:1] == ["run"])
+    lines.insert(run_index, f"dump_restart {segment}")
+    return lines
+
+
 @dataclass
 class MDStage:
     """1 つの ``run`` ブロック。
@@ -492,6 +522,8 @@ class RunInputBuilder:
     replicate: Sequence[int] | None = None
     max_distance_per_step: float | None = None
     actions: Sequence[str] = field(default_factory=tuple)
+    #: 最後のステージの最終ステップで ``restart.xyz`` (最終構造) を必ず書かせるか
+    final_restart: bool = True
 
     # ------------------------------------------------------------------ 構築
     def add_stage(self, stage: MDStage) -> "RunInputBuilder":
@@ -598,9 +630,12 @@ class RunInputBuilder:
             lines.append("# --- standalone actions (run 不要) ---")
             lines.extend(self.actions)
         time_step = self.time_step
-        for stage in self.stages:
+        for i, stage in enumerate(self.stages):
             lines.append("")
-            lines.extend(stage.to_lines(self.default_dump, time_step))
+            stage_lines = stage.to_lines(self.default_dump, time_step)
+            if self.final_restart and i == len(self.stages) - 1:
+                stage_lines = _ensure_final_restart(stage_lines, stage.steps)
+            lines.extend(stage_lines)
             if stage.time_step is not None:
                 time_step = stage.time_step
         return "\n".join(lines) + "\n"

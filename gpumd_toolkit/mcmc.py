@@ -77,6 +77,8 @@ class MetropolisMC:
     calculator_kwargs: dict = field(default_factory=dict)
     calculator: Calculator | None = None
     fast_read: bool = True
+    #: run の後に最終構造を ``final.xyz`` と ``CONTCAR`` に書くか
+    save_final_structure: bool = True
 
     #: 直近の run が書いたトラジェクトリ
     trajectory_path: Path | None = field(default=None, init=False, repr=False)
@@ -239,6 +241,8 @@ class MetropolisMC:
         self.max_displacement = max_displacement
         # 受理されなかった試行で calculator の結果が残らないよう、最終構造で取り直す
         self.atoms.get_potential_energy()
+        if self.save_final_structure:
+            StructureHandler.write_final(self.atoms, self.workdir)
         return self.atoms
 
     def _entry(self, energy, T, max_displacement, window) -> dict[str, float]:

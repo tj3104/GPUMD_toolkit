@@ -286,6 +286,22 @@ calc.set_dump(
 > すべて `dump_xyz <interval> <file> [properties]` に統合されている。
 > 本ツールキットは新しい書式のみを出力する。
 
+#### 最終構造
+
+どの計算でも、成功すると計算後の最終構造が作業ディレクトリに残る。
+
+| ファイル | 中身 |
+|---|---|
+| `restart.xyz` | 最後のステージの最終ステップの構造 (速度・グループつき)。`model.xyz` にリネームすれば続きを計算できる |
+| `CONTCAR` | 同じ構造の VASP 形式 |
+
+最後のステージに `dump_restart <ステップ数>` を自動で足している (`restart=` の間隔が
+ステップ数を割り切ればそれを使う。`deposit` では deposit 間隔に合わせる)。
+`compute_cohesive` などの `run` を伴わない計算では構造が変わらないので、`CONTCAR` は
+`model.xyz` と同じになる。Python からは `result.final_structure()` で読める。
+ASE 側 (`ASEMDRunner.relax` / `run_md`, `MetropolisMC.run`) は `final.xyz` と `CONTCAR` を書く。
+不要なら `save_final_structure=False` を渡す。
+
 ### 2.5 実行前の確認
 
 ```python

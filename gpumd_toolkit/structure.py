@@ -482,6 +482,15 @@ class StructureHandler:
         ase_write(str(path), atoms, format=fmt)
         return path
 
+    @staticmethod
+    def write_final(atoms: Atoms, workdir: Path | str) -> dict[str, Path]:
+        """計算後の最終構造を ``final.xyz`` (拡張 XYZ) と ``CONTCAR`` (VASP) に書く。"""
+        workdir = Path(workdir).expanduser()
+        return {
+            "xyz": StructureHandler.write(atoms, workdir / "final.xyz", format="extxyz"),
+            "vasp": StructureHandler.write(atoms, workdir / "CONTCAR", format="vasp"),
+        }
+
     # ------------------------------------------------------------------ 情報取得
     @staticmethod
     def info(atoms: Atoms) -> StructureInfo:
