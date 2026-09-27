@@ -1266,7 +1266,7 @@ al.explore(T_start=300, T_end=2000, steps=500_000, threshold=0.05)
                 <td>λ を速く動かしすぎると往路と復路の値が食い違う (非平衡性の指標)。
                   小さいほど信頼でき、大きければ t_switch を伸ばす。</td></tr>
             <tr><td>F / G</td><td>Helmholtz / Gibbs 自由エネルギー</td><td>yaml の <code>F</code> <code>G</code></td>
-                <td>G = F + PV。単位は eV/atom。GPUMD の TI は NVT なので F が直接出て、
+                <td>G = F + PV。単位は eV/atom。GPUMD の FL / UF は NVT なので F が直接出て、
                   G は <code>pressure</code> 引数の P を使って足される。</td></tr>
             <tr><td>S<sub>conf</sub></td><td>配置エントロピー</td><td>—</td>
                 <td>固溶体で原子の並べ方の数から来るエントロピー。理想混合なら −k<sub>B</sub> Σ x ln x。</td></tr>
@@ -1281,7 +1281,7 @@ al.explore(T_start=300, T_end=2000, steps=500_000, threshold=0.05)
       <h3><span class="n">5.2</span>共通の流れと G–T グラフ</h3>
       <ol class="prose">
         <li><strong>平衡化</strong> — <code>equilibrate(temperature=T0, pressure=0.0)</code> で目標圧力の体積にする
-          (TI 自体は NVT なので、体積はここで決まる)。</li>
+          (FL / UF は NVT なので、体積はここで決まる。MD の中身は <a href="#ti-md">5.3</a>)。</li>
         <li><strong>絶対値</strong> — 固体は <code>frenkel_ladd(temperature=T0)</code>、
           液体・気体は <code>uhlenbeck_ford(temperature=T0)</code>。</li>
         <li><strong>G(T)</strong> — 同じ計算に続けて <code>reversible_scaling(T_min=T0, T_max=…)</code>。
@@ -1308,7 +1308,122 @@ calc.gibbs_free_energy("ti_spring")   # 1 点の絶対値 {'F', 'G', 'T', 'V', .
 calc.hysteresis("ti_rs")    # {'rms': ..., 'max_abs': ...} [eV/atom]</code></pre>
       </div>
 
-      <h3><span class="n">5.3</span>固相 — Frenkel-Ladd + 可逆スケーリング</h3>
+      <h3 id="ti-md"><span class="n">5.3</span>各 TI の中で実際に回している MD</h3>
+      <p class="prose">
+        TI のステージは「1 本の MD の中で λ を時間とともに動かす」非平衡計算である。
+        どのアンサンブルで、何を λ で切り替え、何を記録しているかを GPUMD のソース
+        (<code>src/integrate/ensemble_ti_*.cu</code>) から整理した。1 ステージは往路と復路の
+        <strong>4 区間 (計 2 × (t_equil + t_switch) ステップ)</strong> からなる:
+        ① λ = 始点で t_equil 平衡化 → ② t_switch かけて λ を終点へ → ③ 終点で t_equil 平衡化 →
+        ④ t_switch かけて λ を始点へ戻す。<code>ti_*.csv</code> に書かれるのは ② と ④ の区間だけで、
+        往路と復路の仕事を平均して散逸を打ち消す <a href="#ref-freitas2016">[2]</a>。
+      </p>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr><th></th><th>固相 FL <code>ti_spring</code></th><th>液相 UF <code>ti_liquid</code></th>
+                <th>RS <code>ti_rs</code></th><th>AS <code>ti_as</code></th></tr>
+          </thead>
+          <tbody>
+            <tr><td>アンサンブル</td>
+                <td colspan="2"><strong>NVT</strong>、Langevin 熱浴 (Bussi-Parrinello <a href="#ref-bussi2007">[9]</a>、<code>nvt_lan</code> と同じ積分器)。
+                  セルは直前のステージのまま固定</td>
+                <td colspan="2"><strong>NPT</strong>、MTTK (Nosé-Hoover chain 熱浴 + MTTK 圧浴 <a href="#ref-mttk">[10]</a>、<code>npt_mttk</code> と同じ積分器)。
+                  <code>direction</code> (iso / aniso / tri) の軸でセルが動く</td></tr>
+            <tr><td>熱浴の目標温度</td>
+                <td colspan="2"><code>temperature</code> で一定</td>
+                <td><strong><code>T_min</code> で一定</strong> (T_max へは上げない)</td>
+                <td><code>temperature</code> で一定</td></tr>
+            <tr><td>λ で切り替えるもの</td>
+                <td>力 F = (1−λ) F<sub>pot</sub> + λ (−k Δr)<br>λ: 0 (対象系) → 1 (Einstein 結晶)</td>
+                <td>力 F = (1−λ) F<sub>pot</sub> + λ F<sub>UF</sub><br>λ: 0 (対象系) → 1 (UF 流体)</td>
+                <td>力とビリアルを λ 倍 (ポテンシャル λU)。圧浴の目標も λP<br>λ: 1 → T_min/T_max</td>
+                <td>圧浴の目標圧力を p_min → p_max へ線形に動かす (λ は無い)</td></tr>
+            <tr><td>λ(τ) の形 (τ = 0→1)</td>
+                <td colspan="2">λ = τ<sup>5</sup>(70τ<sup>4</sup> − 315τ<sup>3</sup> + 540τ<sup>2</sup> − 420τ + 126)
+                  (両端で傾きが 0 になる滑らかな関数 <a href="#ref-freitas2016">[2]</a>)</td>
+                <td>λ = 1 / [1 + τ (T_max/T_min − 1)]<br>→ 有効温度 T_min/λ が時間に比例して上がる <a href="#ref-dekoning1999">[5]</a></td>
+                <td>p = p_min + τ (p_max − p_min)</td></tr>
+            <tr><td>参照系の置き方</td>
+                <td>ステージ開始時の原子位置を格子点 r<sub>0</sub> とし、各原子をばね k でつなぐ。
+                  k 自動時は ① の間の MSD から k = 3k<sub>B</sub>T / ⟨Δr²⟩ (元素ごと)</td>
+                <td>U<sub>UF</sub> = −(p k<sub>B</sub>T) Σ ln(1 − e<sup>−r²/σ²</sup>)
+                  (<code>p</code>=100, <code>sigma_sqrd</code>=2 Å<sup>2</sup> が既定)</td>
+                <td>—</td><td>—</td></tr>
+            <tr><td>csv に書く量</td>
+                <td><code>lambda, dlambda, pe, espring</code></td>
+                <td><code>lambda, dlambda, pe, eUF</code></td>
+                <td><code>lambda, dlambda, enthalpy</code><br>(λ を掛ける<em>前</em>の U + P V)/N</td>
+                <td><code>p, V</code></td></tr>
+            <tr><td>自由エネルギーの出し方</td>
+                <td>F = F<sub>Ein</sub> + ½ Σ<sub>往復</sub> ∫(U − U<sub>E</sub>) |dλ|、
+                  F<sub>Ein</sub> = 3k<sub>B</sub>T ⟨ln(ħω<sub>i</sub>/k<sub>B</sub>T)⟩, ω<sub>i</sub> = √(k<sub>i</sub>/m<sub>i</sub>)
+                  (GPUMD が yaml に書く)</td>
+                <td>F = F<sub>IG</sub> + F<sub>UF</sub><sup>ex</sup>(ρ, σ, p) + ½ Σ<sub>往復</sub> ∫(U − U<sub>UF</sub>) |dλ|
+                  (GPUMD が yaml に書く。F<sub>IG</sub> は混合項 Σ c ln c 込み)</td>
+                <td>W(λ) = ½ Σ<sub>往復</sub> ∫ H dλ を使い
+                  G(T<sub>0</sub>/λ) = [G<sub>0</sub> + (3/2) k<sub>B</sub>T<sub>0</sub> ln λ + W] / λ
+                  (<code>free_energy_reversible_scaling</code>) <a href="#ref-calphy">[8]</a></td>
+                <td>G(p) = G<sub>0</sub> + ½ Σ<sub>往復</sub> ∫ V dp
+                  (<code>free_energy_adiabatic_switching</code>)</td></tr>
+            <tr><td>原著</td>
+                <td><a href="#ref-frenkel1984">[1]</a> <a href="#ref-freitas2016">[2]</a> <a href="#ref-dekoning1996">[4]</a></td>
+                <td><a href="#ref-uf2016">[6]</a> <a href="#ref-uf2017">[7]</a></td>
+                <td><a href="#ref-dekoning1999">[5]</a> <a href="#ref-calphy">[8]</a></td>
+                <td><a href="#ref-watanabe1990">[3]</a> <a href="#ref-calphy">[8]</a></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="prose">
+        固相・液相の計算の流れを MD の区間ごとに書くと次のようになる (5.4 / 5.5 の例)。
+      </p>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr><th>ステージ</th><th>MD</th><th>何のため</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>equilibrate(pressure=0)</code></td><td>NPT (<code>npt_scr</code>)、T<sub>0</sub> 一定</td>
+                <td>目標圧力での体積を決める。FL / UF は NVT なので、ここで決まった体積のまま積分する</td></tr>
+            <tr><td><code>frenkel_ladd</code> / <code>uhlenbeck_ford</code></td><td>NVT Langevin、T<sub>0</sub> 一定、λ: 0→1→0</td>
+                <td>T<sub>0</sub> での絶対値 F (と G = F + P V)。<code>pressure</code> 引数は G の P V にだけ使われ、ダイナミクスには効かない</td></tr>
+            <tr><td><code>reversible_scaling</code></td><td>NPT MTTK、熱浴は T<sub>min</sub> 一定、λ: 1→T<sub>min</sub>/T<sub>max</sub>→1</td>
+                <td>T<sub>min</sub>〜T<sub>max</sub> の G(T) を 1 本の MD で。セルは有効温度に応じて熱膨張する</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="note info">
+        <span class="note-tag">RS で温度が target (T_max) まで上がらないのは正常</span>
+        <p>
+          可逆スケーリングは「温度を上げる」代わりに「ポテンシャルを λ 倍に弱める」計算である。
+          古典系の配置分布は exp(−λU/k<sub>B</sub>T<sub>0</sub>) = exp(−U/k<sub>B</sub>(T<sub>0</sub>/λ)) なので、
+          λU の系を T<sub>0</sub> で回すと、元の系を<strong>有効温度 T<sub>eff</sub> = T<sub>0</sub>/λ</strong>
+          で回したときと同じ原子配置が得られる <a href="#ref-dekoning1999">[5]</a>。
+          そのため <code>thermo.out</code> の値は次のように見える。
+        </p>
+        <ul>
+          <li><strong>温度</strong>: 運動エネルギーは熱浴の T<sub>min</sub> のまま (上の Si の例では平均 301.7 K、T<sub>min</sub> = 300 K)。
+            T<sub>max</sub> には上がらない。G(T) の横軸は T<sub>min</sub>/λ から作る。</li>
+          <li><strong>圧力</strong>: ビリアルも λ 倍されるので、読み取れるのは λP 付近 (P = 0 なら 0 のまま)。</li>
+          <li><strong>体積・ポテンシャルエネルギー</strong>: T<sub>eff</sub> の系と同じように熱膨張し、U も増える。
+            融点を超える T<sub>max</sub> を取ると、温度が T<sub>min</sub> のままでも固体が融ける (5.8)。</li>
+        </ul>
+        <p>
+          以前の版の <code>MDAnalyzer</code> は <code>ti_rs temp T_min T_max</code> を昇温と誤読し、
+          temperature.png / overview.png の破線 “target” を T<sub>min</sub>→T<sub>max</sub> の直線で描いていた。
+          現在は T<sub>min</sub> 一定で描く (図の破線が実測温度と重なれば正常)。
+        </p>
+      </div>
+      <div class="note warn">
+        <span class="note-tag">AS は最初に平衡化しない</span>
+        <p>
+          <code>ti_as</code> は ① の区間を持たず、ステージの最初から p_min → p_max へ動かす
+          (t_equil は p_max 側と、復路のあとの p_min 側に置かれる)。
+          p_min・同温度の NPT 平衡化を直前のステージで済ませておく。
+        </p>
+      </div>
+
+      <h3><span class="n">5.4</span>固相 — Frenkel-Ladd + 可逆スケーリング</h3>
       <p class="prose">
         参照系は各原子を格子点にばねで繋いだ Einstein 結晶。ばね定数は既定で MSD から自動で決まる
         (<code>spring={"Si": 6.0}</code> で指定も可)。
@@ -1336,7 +1451,7 @@ solid_curve = solid.free_energy_curve()  # 300-1200 K の G(T)</code></pre>
         </figcaption>
       </figure>
 
-      <h3><span class="n">5.4</span>液相 — Uhlenbeck-Ford + 可逆スケーリング、融点</h3>
+      <h3><span class="n">5.5</span>液相 — Uhlenbeck-Ford + 可逆スケーリング、融点</h3>
       <p class="prose">
         参照系は Uhlenbeck-Ford 流体 (理想気体 + 軟らかい斥力)。GPUMD は理想気体項
         (ド・ブロイ波長と密度) と多成分の理想混合項 Σ c ln c を含めた絶対値を出すので、
@@ -1377,7 +1492,7 @@ plot_free_energy_curves({"solid": solid_curve, "liquid": liquid_curve}, "G_T_mel
         </p>
       </div>
 
-      <h3><span class="n">5.5</span>固溶体 — 部分対応</h3>
+      <h3><span class="n">5.6</span>固溶体 — 部分対応</h3>
       <div class="note warn">
         <span class="note-tag">配置エントロピーは自動では入らない</span>
         <p>
@@ -1427,7 +1542,7 @@ curve["G_mix"] = curve["G"] - curve["temperature"] * s_conf</code></pre>
         </figcaption>
       </figure>
 
-      <h3><span class="n">5.6</span>気相 — 単原子は対応、分子は非対応</h3>
+      <h3><span class="n">5.7</span>気相 — 単原子は対応、分子は非対応</h3>
       <p class="prose">
         専用のメソッドは無いが、<strong>単原子気体</strong>は <code>uhlenbeck_ford()</code> をそのまま
         気体の密度で使えばよい。Uhlenbeck-Ford 参照系は低密度で理想気体に一致するので、
@@ -1480,12 +1595,12 @@ calc.gibbs_free_energy()      # F, G [eV/atom]</code></pre>
         </figcaption>
       </figure>
 
-      <h3><span class="n">5.7</span>注意点</h3>
+      <h3><span class="n">5.8</span>注意点</h3>
       <ul class="prose">
         <li><strong><code>hysteresis()</code> を必ず見る。</strong> 正常時の rms は 0.01〜0.06 eV/atom 程度。
           Si を融点 (1365 K) より上の <code>T_max=2000</code> K まで可逆スケーリングしたところ、
           折り返し点で固体が融けて rms 0.34 eV/atom になり、G(900 K) が 238 meV ずれた。
-          <code>T_max</code> は融点などの安定限界より下に取る。</li>
+          <code>T_max</code> は融点などの安定限界より下に取る (熱浴は T_min のままでも、有効温度 T_min/λ で融ける)。</li>
         <li><strong>ずれが大きければ <code>t_switch</code> を伸ばす</strong> (スイッチをゆっくりにする)。
           上の値は <code>t_equil=4000</code>, <code>t_switch=20000</code> ステップ。</li>
         <li><strong>エネルギーの原点はポテンシャルごとに違う。</strong> 相どうしの比較は同じポテンシャル同士で行う
@@ -1498,6 +1613,38 @@ calc.gibbs_free_energy()      # F, G [eV/atom]</code></pre>
           (軽元素・低温では PIMD が必要)。</li>
         <li>有限サイズの影響があるので、融点などは原子数を変えて確認する (上の例は 216 原子)。</li>
       </ul>
+
+      <h3 id="ti-refs"><span class="n">5.9</span>原著論文</h3>
+      <ol class="prose">
+        <li id="ref-frenkel1984">D. Frenkel, A. J. C. Ladd, “New Monte Carlo method to compute the free energy of arbitrary solids. Application to the fcc and hcp phases of hard spheres”,
+          <em>J. Chem. Phys.</em> <strong>81</strong>, 3188 (1984). <a href="https://doi.org/10.1063/1.448024">doi:10.1063/1.448024</a> — Frenkel-Ladd 法 (Einstein 結晶参照)</li>
+        <li id="ref-freitas2016">R. Freitas, M. Asta, M. de Koning, “Nonequilibrium free-energy calculation of solids using LAMMPS”,
+          <em>Comput. Mater. Sci.</em> <strong>112</strong>, 333 (2016). <a href="https://doi.org/10.1016/j.commatsci.2015.10.050">doi:10.1016/j.commatsci.2015.10.050</a> — 非平衡 FL と RS の実装、λ(τ) の形、往復平均</li>
+        <li id="ref-watanabe1990">M. Watanabe, W. P. Reinhardt, “Direct dynamical calculation of entropy and free energy by adiabatic switching”,
+          <em>Phys. Rev. Lett.</em> <strong>65</strong>, 3301 (1990). <a href="https://doi.org/10.1103/PhysRevLett.65.3301">doi:10.1103/PhysRevLett.65.3301</a> — 断熱スイッチング</li>
+        <li id="ref-dekoning1996">M. de Koning, A. Antonelli, “Einstein crystal as a reference system in free energy estimation using adiabatic switching”,
+          <em>Phys. Rev. E</em> <strong>53</strong>, 465 (1996). <a href="https://doi.org/10.1103/PhysRevE.53.465">doi:10.1103/PhysRevE.53.465</a> — Einstein 結晶への非平衡スイッチング</li>
+        <li id="ref-dekoning1999">M. de Koning, A. Antonelli, S. Yip, “Optimized free-energy evaluation using a single reversible-scaling simulation”,
+          <em>Phys. Rev. Lett.</em> <strong>83</strong>, 3973 (1999). <a href="https://doi.org/10.1103/PhysRevLett.83.3973">doi:10.1103/PhysRevLett.83.3973</a> — 可逆スケーリング</li>
+        <li id="ref-uf2016">R. Paula Leite, R. Freitas, R. Azevedo, M. de Koning, “The Uhlenbeck-Ford model: Exact virial coefficients and application as a reference system in fluid-phase free-energy calculations”,
+          <em>J. Chem. Phys.</em> <strong>145</strong>, 194101 (2016). <a href="https://doi.org/10.1063/1.4967775">doi:10.1063/1.4967775</a> — 液体の参照系としての UF 模型</li>
+        <li id="ref-uf2017">R. Paula Leite, P. A. Santos-Flórez, M. de Koning, “Uhlenbeck-Ford model: Phase diagram and corresponding-states analysis”,
+          <em>Phys. Rev. E</em> <strong>96</strong>, 032115 (2017). <a href="https://doi.org/10.1103/PhysRevE.96.032115">doi:10.1103/PhysRevE.96.032115</a> — UF 模型の自由エネルギー表 (p = 1, 25, 50, 75, 100)</li>
+        <li id="ref-calphy">S. Menon, Y. Lysogorskiy, J. Rogal, R. Drautz, “Automated free-energy calculation from atomistic simulations”,
+          <em>Phys. Rev. Materials</em> <strong>5</strong>, 103801 (2021). <a href="https://doi.org/10.1103/PhysRevMaterials.5.103801">doi:10.1103/PhysRevMaterials.5.103801</a> — calphy。GPUMD の TI の出力形式・RS/AS の後処理と同じ流儀</li>
+        <li id="ref-bussi2007">G. Bussi, M. Parrinello, “Accurate sampling using Langevin dynamics”,
+          <em>Phys. Rev. E</em> <strong>75</strong>, 056707 (2007). <a href="https://doi.org/10.1103/PhysRevE.75.056707">doi:10.1103/PhysRevE.75.056707</a> — FL / UF の Langevin 熱浴</li>
+        <li id="ref-mttk">G. J. Martyna, D. J. Tobias, M. L. Klein, “Constant pressure molecular dynamics algorithms”,
+          <em>J. Chem. Phys.</em> <strong>101</strong>, 4177 (1994). <a href="https://doi.org/10.1063/1.467468">doi:10.1063/1.467468</a>;
+          W. Shinoda, M. Shiga, M. Mikami, <em>Phys. Rev. B</em> <strong>69</strong>, 134103 (2004). <a href="https://doi.org/10.1103/PhysRevB.69.134103">doi:10.1103/PhysRevB.69.134103</a> — RS / AS の MTTK 熱浴・圧浴</li>
+      </ol>
+      <p class="prose">
+        GPUMD のキーワード説明:
+        <a href="https://gpumd.org/gpumd/input_parameters/ensemble_ti_spring.html"><code>ti_spring</code></a> ·
+        <a href="https://gpumd.org/gpumd/input_parameters/ensemble_ti_liquid.html"><code>ti_liquid</code></a> ·
+        <a href="https://gpumd.org/gpumd/input_parameters/ensemble_ti_rs.html"><code>ti_rs</code></a> ·
+        <a href="https://gpumd.org/gpumd/input_parameters/ensemble_ti_as.html"><code>ti_as</code></a>
+      </p>
     </section>
 
     <!-- ============================================ 06 -->

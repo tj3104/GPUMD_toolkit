@@ -177,7 +177,9 @@ def _parse_ensemble(tokens: Sequence[str]) -> dict:
         i = rest.index("temp")
         T_start = _float(rest[i + 1]) if len(rest) > i + 1 else None
         T_end = _float(rest[i + 2]) if len(rest) > i + 2 else None
-        if T_end is None:
+        if T_end is None or name == "ti_rs":
+            # ti_rs の temp <T_min> <T_max> は昇温ではない。熱浴は T_min 固定で、
+            # 力を lambda 倍して有効温度 T_min/lambda を上げる
             T_end = T_start
     elif name in _LEADING_TEMPERATURE_ENSEMBLES:
         T_start = _float(rest[0]) if rest else None
