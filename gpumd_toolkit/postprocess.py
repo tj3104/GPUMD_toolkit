@@ -355,22 +355,31 @@ def gibbs_from_ti(summary: Mapping[str, float]) -> dict[str, float]:
 
 
 def free_energy_reversible_scaling(
-    ti_rs: pd.DataFrame, *, T0: float, G0: float
+    ti_rs: pd.DataFrame, *, T0: float, G0: float, branch: str = "both"
 ) -> pd.DataFrame:
     """可逆スケーリング (``ti_rs.csv``) から G(T) [eV/atom] を求める。
+
+    ``T_max < T_min`` の降温スキャンでは ``temperature`` は降順に並ぶ
+    (行は lambda の順)。
 
     Parameters
     ----------
     T0, G0
         参照温度 [K] とそこでの Gibbs 自由エネルギー [eV/atom]
         (``ti_spring.yaml`` の ``T`` と ``G``)。
+    branch
+        ``'both'`` (既定) は往路と復路の仕事の平均 (散逸が打ち消し合う)。
+        ``'forward'`` / ``'backward'`` は片道だけ使う (復路が別の相のまま
+        戻ってこなかった場合など)。
     """
+    if branch not in ("both", "forward", "backward"):
+        raise ValueError("branch は 'both' / 'forward' / 'backward' です。")
     forward, backward = _forward_backward(ti_rs)
     lam = forward["lambda"].to_numpy()
-    work = 0.5 * (
-        _cumtrapz(forward["enthalpy"].to_numpy(), lam)
-        + _cumtrapz(backward["enthalpy"].to_numpy(), lam)
-    )
+    work_forward = _cumtrapz(forward["enthalpy"].to_numpy(), lam)
+    work_backward = _cumtrapz(backward["enthalpy"].to_numpy(), lam)
+    work = {"both": 0.5 * (work_forward + work_backward), "forward": work_forward,
+            "backward": work_backward}[branch]
     temperature = T0 / lam
     gibbs = (G0 + 1.5 * KB_EV * T0 * np.log(lam) + work) / lam
     return pd.DataFrame({"lambda": lam, "temperature": temperature, "G": gibbs})

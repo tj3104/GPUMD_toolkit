@@ -83,6 +83,15 @@ class GPUMDResult:
         """解析プロットを ``<workdir>/analysis`` に保存する。"""
         return self.analyzer().plot_all(**kwargs)
 
+    def thermodynamics(self, **kwargs):
+        """温度を振った MD の熱力学量の温度依存性
+        (:class:`~gpumd_toolkit.thermodynamics.ThermodynamicScan`)。"""
+        return self.analyzer().thermodynamic_scan(**kwargs)
+
+    def write_thermodynamics(self, **kwargs) -> dict[str, Path]:
+        """``analysis/thermodynamics.{csv,md,png}`` と ``thermodynamics_transitions.csv`` を書く。"""
+        return self.analyzer().write_thermodynamics(**kwargs)
+
     # ------------------------------------------------------------ トラジェクトリ
     def trajectory(self, filename: str = "dump.xyz") -> TrajectoryConverter:
         return TrajectoryConverter(self.workdir / filename)
@@ -726,6 +735,7 @@ class GPUMDCalculation:
         timeout: float | None = None,
         check: bool = True,
         analyze: bool = False,
+        thermodynamics: bool | str = False,
     ) -> GPUMDResult:
         """入力を書き出して ``gpumd`` を実行する。
 
@@ -739,6 +749,12 @@ class GPUMDCalculation:
             異常終了時に例外を投げるか。
         analyze
             実行後に解析プロットまで自動生成するか。
+        thermodynamics
+            温度を振った MD (昇温・降温、温度の異なる定温ステージ) から
+            熱容量・熱膨張係数・等温圧縮率・密度などの温度依存性と、
+            昇温・降温中の相転移を ``analysis/thermodynamics.*`` に書くモード。
+            ``True`` なら常に書く (温度を振っていなければ警告)、
+            ``'auto'`` なら温度を振っている場合だけ書く、``False`` (既定) なら書かない。
 
         ``save_final_structure=True`` (既定) なら、成功後に最終構造を
         ``restart.xyz`` と ``CONTCAR`` として残す。
@@ -763,6 +779,18 @@ class GPUMDCalculation:
             result.write_final_structure()
         if analyze and result.succeeded:
             result.plot()
+        if thermodynamics and result.succeeded:
+            if thermodynamics not in (True, "auto"):
+                raise ValueError("thermodynamics は True / 'auto' / False です。")
+            try:
+                scan = result.thermodynamics()
+                if scan.temperature_varied or thermodynamics is True:
+                    if not scan.temperature_varied:
+                        warnings.warn("温度を振ったステージが無いため、熱力学量の温度依存性は"
+                                      "定温の値だけです。", RuntimeWarning)
+                    scan.write(self.workdir / "analysis")
+            except Exception as exc:  # 解析の失敗で計算結果を失わない
+                warnings.warn(f"熱力学量の解析に失敗しました: {exc}", RuntimeWarning)
         return result
 
     @property

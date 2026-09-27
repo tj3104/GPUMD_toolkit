@@ -493,6 +493,35 @@ class MDAnalyzer:
             "correlation_time_ps": float(last["time_ps"]),
         }
 
+    # ------------------------------------------------------------ 熱力学量
+    def mean_atomic_mass(self) -> float | None:
+        """``model.xyz`` から平均原子質量 [amu] を求める (無ければ ``None``)。"""
+        model = self.directory / "model.xyz"
+        if not model.is_file():
+            return None
+        try:
+            from .fastio import read_xyz_fast
+
+            return float(read_xyz_fast(model).get_masses().mean())
+        except Exception:
+            return None
+
+    def thermodynamic_scan(self, **kwargs):
+        """温度を振った MD の熱力学量の温度依存性
+        (:func:`gpumd_toolkit.thermodynamics.thermodynamic_scan`)。"""
+        from .thermodynamics import thermodynamic_scan
+
+        if kwargs.get("mass_amu_per_atom") is None:
+            kwargs["mass_amu_per_atom"] = self.mean_atomic_mass()
+        return thermodynamic_scan(self.thermo, **kwargs)
+
+    def write_thermodynamics(
+        self, *, output_dir: Path | str | None = None, dpi: int = 150, **kwargs
+    ) -> dict[str, Path]:
+        """``thermodynamics.{csv,md,png}`` / ``thermodynamics_transitions.csv`` を書く。"""
+        scan = self.thermodynamic_scan(**kwargs)
+        return scan.write(Path(output_dir) if output_dir else self.output_dir, dpi=dpi)
+
     # ------------------------------------------------------------------ 描画
     def plot_all(
         self,

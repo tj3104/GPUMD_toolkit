@@ -42,6 +42,7 @@ GPUMD が ``run.in`` で提供する機能を、分類ごとのワークフロ�
 :mod:`~gpumd_toolkit.inputs`                        すべての ``run.in`` キーワード
 :mod:`~gpumd_toolkit.outputs`                       すべての出力ファイルの読み込み
 :mod:`~gpumd_toolkit.postprocess`                   出力から物理量を取り出す後処理
+:mod:`~gpumd_toolkit.thermodynamics`                相転移の検出 (潜熱・ΔS)・熱力学量の温度依存性
 :mod:`~gpumd_toolkit.groups`                        grouping method の組み立て
 :class:`~gpumd_toolkit.structure.StructureHandler`  POSCAR / CIF などの入出力
 :mod:`~gpumd_toolkit.fastio`                        構造ファイルの高速読み込み
@@ -54,9 +55,9 @@ GPUMD が ``run.in`` で提供する機能を、分類ごとのワークフロ�
 
 from __future__ import annotations
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
-from . import groups, inputs, outputs, postprocess
+from . import groups, inputs, outputs, postprocess, thermodynamics
 from .analysis import MDAnalyzer, ThermoData, compare_runs
 from .ase_interface import (
     ASEMDRunner,
@@ -83,6 +84,12 @@ from .parallel import JobSpec, ParallelRunner
 from .postprocess import ElasticModuli, elastic_moduli
 from .profiles import TemperatureProfile, TemperatureSegment
 from .structure import StructureHandler
+from .thermodynamics import (
+    ThermodynamicScan,
+    TransitionCriteria,
+    detect_phase_transitions,
+    thermodynamic_scan,
+)
 from .trajectory import TrajectoryConverter
 from .validation import Expectation, ValidationReport
 from .workflows import (
@@ -106,6 +113,7 @@ __all__ = [
     "inputs",
     "outputs",
     "postprocess",
+    "thermodynamics",
     # 基本
     "ASEMDRunner",
     "DumpSettings",
@@ -127,6 +135,8 @@ __all__ = [
     "TemperatureProfile",
     "TemperatureSegment",
     "ThermoData",
+    "ThermodynamicScan",
+    "TransitionCriteria",
     "TrajectoryConverter",
     "ValidationReport",
     # ワークフロー
@@ -150,12 +160,14 @@ __all__ = [
     "compare_runs",
     "convert_to_xyz",
     "create_nep_calculator",
+    "detect_phase_transitions",
     "elastic_moduli",
     "environment_report",
     "format_report",
     "nemd_layout",
     "poscar_to_xyz",
     "read_fast",
+    "thermodynamic_scan",
 ]
 
 

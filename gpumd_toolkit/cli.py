@@ -73,14 +73,14 @@ def _common_kwargs(args) -> dict:
     }
 
 
-def _finish(calculation, args, *, analyze: bool = True) -> int:
+def _finish(calculation, args, *, analyze: bool = True, **run_kwargs) -> int:
     print(calculation.describe())
     if args.dry_run:
         calculation.write_inputs()
         print(f"\n入力ファイルを生成しました: {calculation.workdir}\n")
         print(calculation.preview())
         return 0
-    result = calculation.run()
+    result = calculation.run(**run_kwargs)
     print(f"\n完了: {result}")
     if analyze:
         try:
@@ -120,7 +120,14 @@ def cmd_md(args) -> int:
             temperature=args.temperature, temperature_end=args.temperature_end,
             steps=args.steps, thermostat=args.thermostat, tau_T=args.tau_t,
         )
-    return _finish(calc, args)
+    if not args.thermodynamics:
+        return _finish(calc, args)
+    status = _finish(calc, args, thermodynamics=True)
+    if status or args.dry_run:
+        return status
+    print(f"\n熱力学量の温度依存性: {calc.workdir / 'analysis' / 'thermodynamics.md'}")
+    print((calc.workdir / "analysis" / "thermodynamics.md").read_text(encoding="utf-8"))
+    return 0
 
 
 def cmd_static(args) -> int:
@@ -171,6 +178,8 @@ def cmd_free_energy(args) -> int:
         calc.reversible_scaling(
             T_min=args.temperature, T_max=args.temperature_high,
             pressure=args.pressure, t_equil=args.t_equil, t_switch=args.t_switch,
+            transition_guard=args.transition_guard, initial_phase=args.initial_phase,
+            guard_margin=args.guard_margin,
         )
     else:
         calc.adiabatic_switching(
@@ -185,6 +194,10 @@ def cmd_free_energy(args) -> int:
         for key, value in calc.gibbs_free_energy().items():
             print(f"  {key:12s} {value}")
     print("\nヒステリシス (小さいほど良い):", calc.hysteresis())
+    if args.path == "rs":
+        summary = calc.phase_summary()
+        print()
+        print(Path(summary["markdown"]).read_text(encoding="utf-8"))
     return 0
 
 
@@ -412,6 +425,12 @@ def cmd_analyze(args) -> int:
         if not args.no_plot:
             for path in analyzer.plot_all():
                 print(f"  図: {path}")
+        if args.thermodynamics:
+            paths = analyzer.write_thermodynamics()
+            print()
+            print(paths["markdown"].read_text(encoding="utf-8"))
+            for path in paths.values():
+                print(f"  出力: {path}")
     return 0
 
 
@@ -501,6 +520,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--minimize", action="store_true")
     p.add_argument("--thermo-interval", type=int, default=100)
     p.add_argument("--traj-interval", type=int, default=1000)
+    p.add_argument(
+        "--thermodynamics", action="store_true",
+        help="温度を振った場合に熱容量・熱膨張係数などの温度依存性と相転移を出力する",
+    )
     p.set_defaults(func=cmd_md)
 
     # --- static ---
@@ -520,12 +543,24 @@ def build_parser() -> argparse.ArgumentParser:
     _add_common(p)
     p.add_argument("--path", default="solid", choices=["solid", "liquid", "rs", "as"])
     p.add_argument("--temperature", type=float, default=300.0)
-    p.add_argument("--temperature-high", type=float, default=2000.0, help="rs の上限温度")
+    p.add_argument(
+        "--temperature-high", type=float, default=2000.0,
+        help="rs の終点温度 (--temperature より低くすると降温スキャン)",
+    )
     p.add_argument("--pressure", type=float, default=0.0)
     p.add_argument("--pressure-high", type=float, default=10.0, help="as の上限圧力")
     p.add_argument("--t-equil", type=int, default=5000)
     p.add_argument("--t-switch", type=int, default=20000)
     p.add_argument("--equilibrate", type=int, default=10000, help="TI 前の平衡化ステップ数")
+    p.add_argument(
+        "--transition-guard", default="off", choices=["off", "truncate", "rerun", "precheck"],
+        help="rs が相転移を跨がないようにする調整 (off: しない / truncate: G(T) を切り詰める /"
+             " rerun: 終点を手前にして撮り直す / precheck: 事前の NPT ランプで終点を決める)",
+    )
+    p.add_argument("--initial-phase", default=None, choices=["solid", "liquid", "gas"],
+                   help="rs の出発温度での相 (転移の分類用)")
+    p.add_argument("--guard-margin", type=float, default=0.03,
+                   help="転移区間の端から引く余裕 (相対値)")
     p.set_defaults(func=cmd_free_energy)
 
     # --- mc ---
@@ -644,6 +679,8 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("analyze", help="計算ディレクトリの出力を解析・作図する")
     p.add_argument("workdir")
     p.add_argument("--no-plot", action="store_true")
+    p.add_argument("--thermodynamics", action="store_true",
+                   help="熱力学量の温度依存性と相転移を出力する")
     p.set_defaults(func=cmd_analyze)
 
     p = sub.add_parser("convert", help="構造・トラジェクトリを変換する")

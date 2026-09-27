@@ -42,6 +42,7 @@ Python API にしてある。機能分類ごとにワークフロークラスが
 │   ├── workflows/        機能分類ごとの高レベルクラス (上の表)
 │   ├── outputs.py        OutputReader      … GPUMD の全出力ファイルの読み込み
 │   ├── postprocess.py    弾性率 / κ / D / η / 自由エネルギー曲線などの後処理
+│   ├── thermodynamics.py 相転移の検出 (潜熱・ΔS) / RS の相転移まとめ / 熱力学量の温度依存性
 │   ├── trajectory.py     TrajectoryConverter … 拡張 XYZ / XDATCAR などへの変換
 │   ├── analysis.py       MDAnalyzer        … thermo.out 解析と matplotlib 出力
 │   ├── parallel.py       ParallelRunner    … joblib による並列実行
@@ -456,7 +457,71 @@ plot_free_energy_curves({"solid": solid_curve, "liquid": liquid_curve}, "G_T_mel
 | 気相 (分子) | — | 非対応 (TI 中に分子が解離する。理想気体の式で出す) |
 
 `hysteresis()` (往路と復路のずれ) を必ず確認する。可逆スケーリングの `T_max` を融点より上に取ると
-折り返し点で融けて、G(T) が大きくずれる。
+折り返し点で融けて、G(T) が大きくずれる (→ 下の `transition_guard` で防げる)。
+
+#### 降温スキャンと融点 (v0.4.0)
+
+`reversible_scaling` の `T_min` は **スキャンの出発温度** で、`T_max < T_min` とすれば
+高温から降温する向きに走る (液体を 5000 K の Uhlenbeck-Ford から 1000 K まで冷やす、など)。
+このとき `free_energy_curve()` の温度は降順に並ぶが、`melting_point_from_curves` は内部で
+昇順に並べ替えてから交点を求めるので、**融点はスキャンの向きに依存しない**
+(v0.3.0 までは降順の曲線をそのまま `np.interp` に渡しており、誤った交点を返していた)。
+
+```python
+liquid = FreeEnergyCalculation("liquid.xyz", "nep.txt", "runs/fe_liquid")
+liquid.equilibrate(temperature=5000, steps=10000, pressure=0.0)
+liquid.uhlenbeck_ford(temperature=5000, t_equil=4000, t_switch=20000)
+liquid.reversible_scaling(T_min=5000, T_max=1000, t_equil=4000, t_switch=40000)  # 降温
+liquid.run(analyze=True)
+tm = melting_point_from_curves(solid.free_energy_curve(), liquid.free_energy_curve())
+```
+
+#### 可逆スケーリング中の相転移のまとめ (v0.4.0)
+
+`ti_rs` の系は温度 T0 のままポテンシャルを λ 倍しているが、これは元のポテンシャルで温度
+T0/λ の系と同じ分布なので、`ti_rs.csv` の `enthalpy` (U + PV) は実温度での H(T) になる。
+その段差 (潜熱 ΔH) と転移エントロピー ΔS = ΔH/T から一次相転移を検出し、
+往路・復路で起きた **融解・凝固・蒸発・凝縮・昇華・凝華** をまとめる。
+`run(analyze=True)` で自動的に書き、`phase_summary()` で書き直せる。
+
+| 出力 (`analysis/`) | 内容 |
+|---|---|
+| `rs_phases.md` | 要約: 往路/復路で起きた過程、相転移を跨がない範囲、ヒステリシスからの融点の目安 |
+| `rs_phases.csv` | 転移の表: `pass`, `process` (`melting` など), `process_ja`, `from_phase`/`to_phase`, `T_K`, 区間 `T_onset_K`–`T_end_K`, `delta_H_eV_per_atom`, `latent_heat_kJ_per_mol`, `delta_S_kB_per_atom`, `delta_S_J_per_mol_K` |
+| `rs_phases.png` | 往路・復路の H(T) と転移区間、G(T) の有効範囲 |
+| `rs_phases.json` | 要約の数値 |
+
+分類は「スキャン開始時の相」(`frenkel_ladd` 基準なら固相、`uhlenbeck_ford` なら液相、
+`reversible_scaling(initial_phase=...)` で指定可) から相をたどり、ΔS (体積が分かるときは体積比) で
+気相が関わるかを判定する。基準は `TransitionCriteria` で変えられる
+(`min_entropy_kB=0.2`: これ未満の段差は無視、`vaporization_entropy_kB=4.5`: これ以上なら蒸発/昇華)。
+
+往路で融けても復路で凝固しない (過冷却液体・アモルファスのまま戻る) ことや、
+**折り返し点の保持 (`t_equil`) 中に融けて往路には段差が出ない** ことがある
+(NEP Si 216 原子の実測: 300→2500 K で往路 2159 K 融解、300→2025 K では往路に段差が無いのに
+復路は 300 K まで H が +0.21 eV/atom 高いまま)。そこで往路と復路の H を同じ温度で比べ、
+復路が出発相に戻っていなければ G(T) を往路だけから求める
+(`free_energy_reversible_scaling(..., branch="forward")`)。
+
+#### 相転移を跨がないようにする調整機能 `transition_guard` (v0.4.0)
+
+```python
+calc.reversible_scaling(T_min=300, T_max=2500, t_equil=4000, t_switch=40000,
+                        transition_guard="rerun")        # "off" / "truncate" / "rerun" / "precheck"
+calc.run(analyze=True)
+calc.free_energy_curve()      # 相転移の手前までの G(T)
+calc.rs_valid_range()         # {'limit': ..., 'branch': 'both' | 'forward', 'backward_returns': ...}
+```
+
+| モード | 動作 |
+|---|---|
+| `"off"` (既定) | 従来どおり。転移を跨いでいれば `free_energy_curve()` で警告だけ出す |
+| `"truncate"` | 再計算しない。G(T) を T0 側で最初の転移区間の手前 (`guard_margin`=3% 内側) までに切り詰める |
+| `"rerun"` | 転移を検出したら終点をその手前にして `ti_rs` を `rs_guard_<n>/` で撮り直す (最大 `max_rerun`=3 回)。往路に段差が無いのに復路が戻らない場合はスキャン幅を `guard_shrink`=15% ずつ縮める。基準 (T0, G0) は元の計算のもの |
+| `"precheck"` | 本番の前に同じ温度範囲の短い NPT ランプ (`rs_precheck/`, `precheck_steps`) で転移を探し、終点を転移の手前にしてから本番を走らせる |
+
+`"off"` 以外では、実行後に残った転移も切り詰めで除く。撮り直しの記録は `analysis/rs_guard.json`
+に残るので、同じディレクトリで計算オブジェクトを作り直しても撮り直した結果を読む。
 
 ### 2.7.3 Monte Carlo・組成自由度 (分類 4)
 
@@ -825,6 +890,36 @@ a.plot_all()              # overview/temperature/energy/pressure/cell(+msd/sdc/r
 a.diffusion_coefficient(source="msd")   # msd.out から自己拡散係数
 ```
 
+### 3.1 熱力学量の温度依存性 (温度を振った MD、v0.4.0)
+
+昇温・降温ステージや温度の異なる定温ステージがある MD では、`run(thermodynamics=True)` で
+熱力学量の温度依存性と、昇温・降温中の相転移を書き出す (`"auto"` なら温度を振っている場合だけ)。
+
+```python
+calc = GPUMDCalculation("POSCAR", "nep.txt", "runs/si_scan")
+for T in (300, 600, 900):                                          # 定温 (揺らぎから)
+    calc.npt(temperature=T, steps=20000, pressure=0.0)
+calc.npt(temperature=300, temperature_end=2500, steps=200000)       # 昇温 (微分から)
+calc.npt(temperature=2500, temperature_end=300, steps=200000)       # 降温
+calc.run(analyze=True, thermodynamics=True)
+# -> analysis/thermodynamics.{csv,md,png}, thermodynamics_transitions.csv
+
+scan = MDAnalyzer("runs/si_scan").thermodynamic_scan()   # 既存の計算から
+scan.ramp, scan.plateaus, scan.transitions
+```
+
+| 量 | 昇温・降温ステージ (`ramp`) | 定温ステージ (`plateaus`) |
+|---|---|---|
+| 熱容量 | C = dH/dT (NPT: C_P) / dE/dT (NVT: C_V) | Var(H)/(kB T²) (NPT)・Var(E)/(kB T²) (NVT)、隣の温度との差分 |
+| 熱膨張係数 α | (1/V) dV/dT | Cov(V, H)/(kB T² ⟨V⟩)、差分 |
+| 等温圧縮率 κ_T・体積弾性率 B | — | Var(V)/(kB T ⟨V⟩)、B = 1/κ_T |
+| H, E, U, V, 密度, 平均圧力 | 温度の区間ごとの平均 | 平均 (先頭 30% は平衡化として除外) |
+| 相転移 | H(T) の段差から (体積比も使う) | — |
+
+熱容量は kB/atom と J/(mol K) (原子 1 mol あたり)、`model.xyz` から質量が分かれば J/(g K) と密度 g/cm³ も出す。
+Berendsen の熱浴・圧浴 (`nvt_ber` / `npt_ber`) は揺らぎが正しくないので `fluctuation_valid=False` になる。
+値はすべて古典的 (量子補正なし)。
+
 複数計算の重ね描き:
 
 ```python
@@ -1063,6 +1158,15 @@ gpumd-toolkit static POSCAR -p $NEP -o runs/static --relax --relax-cell --elasti
 # 3. 自由エネルギー (Frenkel-Ladd)
 gpumd-toolkit free-energy POSCAR -p $NEP -o runs/fe --path solid \
     --temperature 300 --t-equil 5000 --t-switch 20000
+
+# 3. 可逆スケーリング + 相転移を跨がないよう撮り直す (相転移のまとめを表示)
+gpumd-toolkit free-energy POSCAR -p $NEP -o runs/rs --path rs \
+    --temperature 300 --temperature-high 2500 --transition-guard rerun
+
+# 2. 昇温 MD + 熱力学量の温度依存性 (analysis/thermodynamics.*)
+gpumd-toolkit md POSCAR -p $NEP -o runs/scan --ensemble npt \
+    --temperature 300 --temperature-end 2500 --steps 200000 --thermodynamics
+gpumd-toolkit analyze runs/scan --thermodynamics      # 既存の計算から
 
 # 4. Monte Carlo
 gpumd-toolkit mc alloy.xyz -p $NEP -o runs/mc --mode vcsgc \

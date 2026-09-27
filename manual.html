@@ -475,7 +475,7 @@ td:first-child { white-space: nowrap; }
 
   <nav class="rail" aria-label="目次">
     <span class="rail-mark">gpumd_toolkit</span>
-    <span class="rail-sub">v0.3.0 · Python 3.12</span>
+    <span class="rail-sub">v0.4.0 · Python 3.12</span>
     <ul class="rail-list">
       <li><a class="rail-link" href="#overview"><span class="n">00</span><span>概要と構成</span></a></li>
       <li><a class="rail-link" href="#setup"><span class="n">01</span><span>セットアップ</span></a></li>
@@ -1614,7 +1614,46 @@ calc.gibbs_free_energy()      # F, G [eV/atom]</code></pre>
         <li>有限サイズの影響があるので、融点などは原子数を変えて確認する (上の例は 216 原子)。</li>
       </ul>
 
-      <h3 id="ti-refs"><span class="n">5.9</span>原著論文</h3>
+      <h3 id="rs-phases"><span class="n">5.9</span>可逆スケーリング中の相転移と調整機能 (v0.4.0)</h3>
+      <p class="prose">
+        <code>ti_rs.csv</code> の <code>enthalpy</code> (U + PV) は有効温度 T0/λ での H(T) なので、その段差 (潜熱 ΔH) と
+        転移エントロピー ΔS = ΔH/T から一次相転移を検出し、往路・復路で起きた
+        <strong>融解・凝固・蒸発・凝縮・昇華・凝華</strong> を <code>analysis/rs_phases.{md,csv,png,json}</code> にまとめる
+        (<code>run(analyze=True)</code> で自動、<code>phase_summary()</code> で再作成)。
+        分類は出発相 (<code>frenkel_ladd</code> 基準 → 固相、<code>uhlenbeck_ford</code> → 液相、<code>initial_phase=</code> で指定可) から相をたどり、
+        気相が関わるかを体積比 (分かる場合) か ΔS (既定 4.5 kB 以上) で判定する。気相の関わらない段差のうち
+        ΔS が最大のものを融解/凝固とし、それ以外の小さな段差は固相間転移・液相内の転移とする。
+      </p>
+      <p class="prose">
+        <code>T_max &lt; T_min</code> とすれば降温スキャンになる (液体を高温の UF から冷やす)。
+        <code>melting_point_from_curves</code> は曲線を昇順に並べ替えてから交点を求めるので、融点はスキャンの向きに依存しない
+        (v0.3.0 までは降順の曲線をそのまま <code>np.interp</code> に渡しており誤りだった)。
+      </p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th><code>transition_guard</code></th><th>動作</th></tr></thead>
+          <tbody>
+            <tr><td><code>"off"</code> (既定)</td><td>従来どおり。転移を跨いでいれば警告だけ出す</td></tr>
+            <tr><td><code>"truncate"</code></td><td>再計算せず、G(T) を T0 側で最初の転移区間の手前 (3% 内側) までに切り詰める</td></tr>
+            <tr><td><code>"rerun"</code></td><td>終点を転移の手前にして <code>rs_guard_&lt;n&gt;/</code> で撮り直す (最大 3 回、基準 (T0, G0) は元の計算のもの)</td></tr>
+            <tr><td><code>"precheck"</code></td><td>本番の前に短い NPT ランプ (<code>rs_precheck/</code>) で転移を探し、終点を決めてから走らせる</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="prose">
+        往路と復路の H を同じ温度で比べ、復路が出発相に戻っていなければ (凝固しなかった、折り返し点の保持中に融けた)
+        G(T) を往路だけから求める (<code>branch="forward"</code>)。実測 (NEP Si 216 原子、<code>t_switch=40000</code>):
+      </p>
+      <ul class="prose">
+        <li>300→2500 K: 往路 2194 K で融解 (ΔS 1.50 kB/atom)、復路 940 K で凝固 (ΔS 0.50 kB、液体→アモルファス)。</li>
+        <li><code>"rerun"</code> 1 回目 300→2025 K: 往路に段差が無いのに復路は 300 K で H が +0.21 eV/atom 高い
+          (折り返し点の保持中に融解)。スキャン幅を 15% ずつ縮め、300→1865 K で往路と復路が一致した。</li>
+        <li><code>"precheck"</code>: 40000 ステップの NPT ランプで 1559 K に小さな段差・2124 K に融解を検出し、終点を 1417 K にして本番を走らせた
+          (往路と復路が全域で一致)。昇温で発熱する向きの逆な段差 (ランプの揺らぎ) は範囲の決定に使わない。</li>
+        <li><code>"truncate"</code> 300→2500 K: 復路が戻らない (+0.22 eV/atom) ので往路のみで G(T) を求め、往路の融解 (2205 K) の手前 2089 K で切った。</li>
+      </ul>
+
+      <h3 id="ti-refs"><span class="n">5.10</span>原著論文</h3>
       <ol class="prose">
         <li id="ref-frenkel1984">D. Frenkel, A. J. C. Ladd, “New Monte Carlo method to compute the free energy of arbitrary solids. Application to the fcc and hcp phases of hard spheres”,
           <em>J. Chem. Phys.</em> <strong>81</strong>, 3188 (1984). <a href="https://doi.org/10.1063/1.448024">doi:10.1063/1.448024</a> — Frenkel-Ladd 法 (Einstein 結晶参照)</li>
@@ -1769,6 +1808,29 @@ a.diffusion_coefficient(source="msd")   # msd.out から自己拡散係数</code
 <pre><code class="language-python">from gpumd_toolkit.analysis import compare_runs
 compare_runs(["runs/T300K", "runs/T600K"], quantity="temperature", filename="cmp.png")</code></pre>
       </div>
+
+      <h3 id="thermodynamics"><span class="n">8.1</span>熱力学量の温度依存性 (v0.4.0)</h3>
+      <p class="prose">
+        昇温・降温や温度の異なる定温ステージがある MD では <code>run(thermodynamics=True)</code>
+        (<code>"auto"</code> なら温度を振った場合だけ) で <code>analysis/thermodynamics.{csv,md,png}</code> と
+        <code>thermodynamics_transitions.csv</code> を書く。昇温・降温からは C = dH/dT (NPT) / dE/dT (NVT)・α = (1/V)dV/dT・密度と
+        相転移、定温からは揺らぎの公式 C = Var(H)/(kB T²)・κ_T = Var(V)/(kB T⟨V⟩)・B = 1/κ_T・α = Cov(V,H)/(kB T²⟨V⟩) と温度差分。
+        Berendsen は揺らぎが正しくないので <code>fluctuation_valid=False</code>。
+      </p>
+      <div class="block">
+        <div class="block-bar"><span class="block-tag">python</span><button class="copy" type="button">copy</button></div>
+<pre><code class="language-python">calc = GPUMDCalculation("POSCAR", "nep.txt", "runs/si_scan")
+for T in (300, 600, 900):
+    calc.npt(temperature=T, steps=20000, pressure=0.0)
+calc.npt(temperature=300, temperature_end=2500, steps=200000)
+calc.npt(temperature=2500, temperature_end=300, steps=200000)
+calc.run(analyze=True, thermodynamics=True)
+scan = MDAnalyzer("runs/si_scan").thermodynamic_scan()   # scan.ramp / plateaus / transitions</code></pre>
+      </div>
+      <p class="prose">
+        実測 (NEP Si 216 原子): 固相の C_P ≈ 3 kB/atom (Dulong-Petit)、昇温で 1959 K に融解 (ΔS 2.2 kB、体積比 0.95 — Si は融けると縮む)。
+        定温 20000 ステップ (140 点) では揺らぎからの B・α は誤差が大きい (1000 点以上を推奨、<code>.md</code> に注記が出る)。
+      </p>
     </section>
 
     <!-- ============================================ 09 -->
