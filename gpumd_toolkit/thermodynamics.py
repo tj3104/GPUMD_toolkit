@@ -722,12 +722,14 @@ class ThermodynamicScan:
 
         figure, axes = plt.subplots(2, 2, figsize=(11, 7.5), sharex=True)
         (ax_h, ax_v), (ax_c, ax_a) = axes
-        for stage, group in self.ramp.groupby("stage", sort=True):
-            tag = f"ramp {stage} ({group['ensemble'].iloc[0]})"
-            ax_h.plot(group["T_K"], group["H_eV_per_atom"], "-", lw=1.2, label=tag)
-            ax_v.plot(group["T_K"], group["V_A3_per_atom"], "-", lw=1.2, label=tag)
-            ax_c.plot(group["T_K"], group["C_kB_per_atom"], "-", lw=1.0, label=tag)
-            ax_a.plot(group["T_K"], group["alpha_per_K"], "-", lw=1.0, label=tag)
+        # 定温ステージだけのとき ramp は列の無い空の表なので groupby できない
+        if len(self.ramp):
+            for stage, group in self.ramp.groupby("stage", sort=True):
+                tag = f"ramp {stage} ({group['ensemble'].iloc[0]})"
+                ax_h.plot(group["T_K"], group["H_eV_per_atom"], "-", lw=1.2, label=tag)
+                ax_v.plot(group["T_K"], group["V_A3_per_atom"], "-", lw=1.2, label=tag)
+                ax_c.plot(group["T_K"], group["C_kB_per_atom"], "-", lw=1.0, label=tag)
+                ax_a.plot(group["T_K"], group["alpha_per_K"], "-", lw=1.0, label=tag)
         if len(self.plateaus):
             p = self.plateaus.sort_values("T_K")
             ax_h.plot(p["T_K"], p["H_eV_per_atom"], "ko", ms=5, mfc="white", label="plateaus")
