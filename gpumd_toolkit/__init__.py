@@ -54,7 +54,7 @@ GPUMD が ``run.in`` で提供する機能を、分類ごとのワークフロ�
 
 from __future__ import annotations
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 from . import groups, inputs, outputs, postprocess
 from .analysis import MDAnalyzer, ThermoData, compare_runs

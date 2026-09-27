@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "gpumd-toolkit"
-version = "0.2.0"
+version = "0.3.0"
 description = "GPUMD を Python から使いこなすためのツールキット (MD・自由エネルギー・MC・熱輸送・PIMD・衝撃波・TTM・Active Learning)"
 readme = "README.md"
 requires-python = ">=3.10"
