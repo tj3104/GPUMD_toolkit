@@ -426,19 +426,37 @@ print(solid.gibbs_free_energy())
 print(solid.hysteresis())      # 往復のずれ。大きければ t_switch を伸ばす
 ```
 
-融点は「固相と液相の G(T) が交わる温度」として出す:
+`run(analyze=True)` は `analysis/G_T.png` / `G_T.csv` (G–T グラフ) を必ず書く。
+可逆スケーリングの基準 (T0, G0) は、同じ計算内の `frenkel_ladd` / `uhlenbeck_ford` (T_min と同温度)
+から自動で取る。別の計算の値を使うときは `reversible_scaling(reference=(T0, G0))`。
 
 ```python
-from gpumd_toolkit.workflows import melting_point_from_curves
+from gpumd_toolkit.workflows import melting_point_from_curves, plot_free_energy_curves
 
-G0 = solid.gibbs_free_energy()["G"]
-rs = FreeEnergyCalculation("POSCAR", "nep.txt", "runs/rs")
-rs.reversible_scaling(T_min=300, T_max=2000, pressure=0.0, t_switch=50000)
-rs.run()
-solid_curve = rs.free_energy_curve(T0=300, G0=G0)
-# 液相も同様に ti_liquid + ti_rs で出してから
+solid = FreeEnergyCalculation("POSCAR", "nep.txt", "runs/fe_solid", repeat=(3, 3, 3))
+solid.equilibrate(temperature=300, steps=10000, pressure=0.0)
+solid.frenkel_ladd(temperature=300, t_equil=4000, t_switch=20000)
+solid.reversible_scaling(T_min=300, T_max=1200, t_equil=4000, t_switch=20000)
+solid.run(analyze=True)                    # -> analysis/G_T.png
+solid_curve = solid.free_energy_curve()    # 基準は同じ計算の ti_spring から
+
+# 液相も uhlenbeck_ford + reversible_scaling で作ってから
 print(melting_point_from_curves(solid_curve, liquid_curve))
+plot_free_energy_curves({"solid": solid_curve, "liquid": liquid_curve}, "G_T_melting.png")
 ```
+
+相ごとの対応状況 (手順と検証結果の詳細は manual.html の「05 自由エネルギー計算の流れ」):
+
+| 相 | 方法 | 対応 |
+|---|---|---|
+| 固相 | `frenkel_ladd` → `reversible_scaling` | 対応 |
+| 液相 | `uhlenbeck_ford` → `reversible_scaling` | 対応 |
+| 固溶体 | `frenkel_ladd` (固定配置) − T S_conf を手で補正 | 部分対応 (配置エントロピーは自動では入らない) |
+| 気相 (単原子) | `uhlenbeck_ford` を気体の密度で | 対応 (専用 API なし) |
+| 気相 (分子) | — | 非対応 (TI 中に分子が解離する。理想気体の式で出す) |
+
+`hysteresis()` (往路と復路のずれ) を必ず確認する。可逆スケーリングの `T_max` を融点より上に取ると
+折り返し点で融けて、G(T) が大きくずれる。
 
 ### 2.7.3 Monte Carlo・組成自由度 (分類 4)
 

@@ -26,7 +26,11 @@ from __future__ import annotations
 from .active_learning import ActiveLearningCalculation
 from .diffusion import DiffusionCalculation
 from .electronic import ElectronicCalculation
-from .free_energy import FreeEnergyCalculation, melting_point_from_curves
+from .free_energy import (
+    FreeEnergyCalculation,
+    melting_point_from_curves,
+    plot_free_energy_curves,
+)
 from .mechanical import MechanicalCalculation
 from .monte_carlo import MonteCarloCalculation
 from .pimd import PathIntegralCalculation
@@ -69,6 +73,7 @@ __all__ = [
     "WORKFLOWS",
     "band_path_kpoints",
     "melting_point_from_curves",
+    "plot_free_energy_curves",
     "write_electron_properties_file",
     "write_electron_temperature_file",
     "write_kpoints",
