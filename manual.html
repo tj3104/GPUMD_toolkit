@@ -545,6 +545,7 @@ td:first-child { white-space: nowrap; }
 │   ├── md.py             <b>GPUMDCalculation</b>    <span class="star">★ MD 計算のメインクラス</span>
 │   ├── trajectory.py     <b>TrajectoryConverter</b> <span class="dim">XDATCAR / traj などへの変換</span>
 │   ├── analysis.py       <b>MDAnalyzer</b>          <span class="dim">thermo.out 解析と matplotlib 出力</span>
+│   ├── thermodynamics.py <b>ThermodynamicScan</b>    <span class="dim">相転移の検出 (潜熱・ΔS)・RS の相転移まとめ・熱力学量の温度依存性</span>
 │   ├── parallel.py       <b>ParallelRunner</b>      <span class="dim">joblib による並列実行</span>
 │   ├── ase_interface.py  <b>ASEMDRunner</b>         <span class="star">★ ASE ベースの実行 (CPU/GPU/pyNEP)</span>
 │   ├── validation.py     <b>ValidationReport</b>    <span class="dim">予実 (期待値 vs 実測値) 管理</span>
@@ -2132,6 +2133,10 @@ gpumd-toolkit check         # 実行環境の確認
 gpumd-toolkit md POSCAR -p $NEP -o runs/nvt --temperature 300 --steps 20000
 gpumd-toolkit static POSCAR -p $NEP -o runs/static --relax --relax-cell --elastic
 gpumd-toolkit free-energy POSCAR -p $NEP -o runs/fe --path solid --temperature 300
+gpumd-toolkit free-energy POSCAR -p $NEP -o runs/rs --path rs --temperature 300 \
+    --temperature-high 2500 --transition-guard rerun      # 相転移を跨がないよう撮り直す
+gpumd-toolkit md POSCAR -p $NEP -o runs/scan --ensemble npt --temperature 300 \
+    --temperature-end 2500 --steps 200000 --thermodynamics  # 熱力学量の温度依存性
 gpumd-toolkit mc alloy.xyz -p $NEP -o runs/mc --mode vcsgc --species Cu Ni --values -0.5 0.5
 gpumd-toolkit transport POSCAR -p $NEP -o runs/kappa --method hnemd
 gpumd-toolkit diffusion liquid.xyz -p $NEP -o runs/liquid --viscosity --rdf
@@ -2142,6 +2147,7 @@ gpumd-toolkit mechanical POSCAR -p $NEP -o runs/tensile --strain-rate 1e8
 gpumd-toolkit active-learning POSCAR -p nep0.txt nep1.txt nep2.txt -o runs/al
 
 gpumd-toolkit analyze runs/nvt
+gpumd-toolkit analyze runs/scan --thermodynamics   # 既存の計算から熱力学量・相転移
 gpumd-toolkit convert runs/nvt/dump.xyz runs/nvt/XDATCAR --to xdatcar --stride 10
 
 # 全機能を短いステップ数で一通り流すデモ
