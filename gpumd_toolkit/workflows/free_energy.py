@@ -124,7 +124,10 @@ class FreeEnergyCalculation(GPUMDCalculation):
         ``pressure`` を与えると NPT で平衡化してから TI に入る。
         """
         if pressure is None:
-            self.nvt(temperature=temperature, steps=steps, thermostat=thermostat, **kwargs)
+            self.nvt(temperature=temperature,
+                     steps=steps,
+                     thermostat=thermostat,
+                     **kwargs)
         else:
             self.npt(
                 temperature=temperature,
@@ -136,12 +139,18 @@ class FreeEnergyCalculation(GPUMDCalculation):
         return self
 
     # ------------------------------------------------------------------ TI
-    def _add_ti(self, spec, t_equil: int, t_switch: int) -> "FreeEnergyCalculation":
+    def _add_ti(self, spec, t_equil: int,
+                t_switch: int) -> "FreeEnergyCalculation":
         steps = 2 * (int(t_equil) + int(t_switch))
         self.ti_kind = spec.name
-        self.ti_stages.append({"kind": spec.name, **{
-            key: getattr(spec, key) for key in ("temperature", "T_min", "T_max", "p_min", "p_max")
-            if hasattr(spec, key)}})
+        self.ti_stages.append({
+            "kind": spec.name,
+            **{
+                key: getattr(spec, key)
+                for key in ("temperature", "T_min", "T_max", "p_min", "p_max") if hasattr(
+                    spec, key)
+            }
+        })
         self.add_stage(MDStage(spec, steps=steps, label=f"{spec.name}"))
         return self
 
@@ -371,10 +380,8 @@ class FreeEnergyCalculation(GPUMDCalculation):
         """
         kind = self._kind(kind)
         if kind not in ("ti_spring", "ti_liquid"):
-            raise ValueError(
-                f"{kind} は絶対自由エネルギーを出しません。"
-                " ti_rs / ti_as は free_energy_curve() を使ってください。"
-            )
+            raise ValueError(f"{kind} は絶対自由エネルギーを出しません。"
+                             " ti_rs / ti_as は free_energy_curve() を使ってください。")
         return gibbs_from_ti(read_ti_yaml(self.workdir / f"{kind}.yaml"))
 
     def free_energy_curve(
@@ -423,11 +430,15 @@ class FreeEnergyCalculation(GPUMDCalculation):
             valid = self.rs_valid_range()
             if valid["branch"] != "both":
                 warnings.warn(f"ti_rs: {valid['reason']}。", RuntimeWarning)
-            curve = free_energy_reversible_scaling(table, T0=T0, G0=G0, branch=valid["branch"])
+            curve = free_energy_reversible_scaling(table,
+                                                   T0=T0,
+                                                   G0=G0,
+                                                   branch=valid["branch"])
             if valid["limit"] is not None:
                 lo, hi = sorted((self.rs_start_temperature(), valid["limit"]))
                 curve = curve[(curve["temperature"] >= lo - 1e-9)
-                              & (curve["temperature"] <= hi + 1e-9)].reset_index(drop=True)
+                              & (curve["temperature"] <= hi +
+                                 1e-9)].reset_index(drop=True)
             return curve
         if kind == "ti_as":
             if G0 is None:
@@ -435,8 +446,7 @@ class FreeEnergyCalculation(GPUMDCalculation):
                 if reference is None:
                     raise ValueError(
                         "ti_as の基準 G0 (p_min での G) がありません。"
-                        " adiabatic_switching(reference=...) で与えてください。"
-                    )
+                        " adiabatic_switching(reference=...) で与えてください。")
                 G0 = reference[1]
             return free_energy_adiabatic_switching(table, G0=G0)
         raise ValueError(f"{kind} には自由エネルギー曲線がありません。")
@@ -451,7 +461,8 @@ class FreeEnergyCalculation(GPUMDCalculation):
     def _rs_spec(self) -> TIReversibleScaling:
         index = self._rs_stage_index()
         if index is None:
-            raise ValueError("ti_rs のステージがありません。reversible_scaling() を呼んでください。")
+            raise ValueError(
+                "ti_rs のステージがありません。reversible_scaling() を呼んでください。")
         return self.stages[index].ensemble_spec
 
     def rs_start_temperature(self) -> float:
@@ -465,7 +476,8 @@ class FreeEnergyCalculation(GPUMDCalculation):
             return phase
         T0 = self.rs_start_temperature()
         for stage in self.ti_stages:
-            if stage.get("temperature") is not None and abs(stage["temperature"] - T0) < 1e-6:
+            if stage.get("temperature") is not None and abs(
+                    stage["temperature"] - T0) < 1e-6:
                 if stage["kind"] == "ti_spring":
                     return "solid"
                 if stage["kind"] == "ti_liquid":
@@ -487,10 +499,14 @@ class FreeEnergyCalculation(GPUMDCalculation):
         return {}
 
     def _save_guard_state(self, **updates) -> dict:
-        state = {**self.guard_state(), **updates, "mode": self._rs_guard.get("mode", "off")}
+        state = {
+            **self.guard_state(),
+            **updates, "mode": self._rs_guard.get("mode", "off")
+        }
         path = self._guard_path()
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(state, indent=2, ensure_ascii=False, default=float))
+        path.write_text(
+            json.dumps(state, indent=2, ensure_ascii=False, default=float))
         return state
 
     def rs_directory(self) -> Path:
@@ -507,21 +523,26 @@ class FreeEnergyCalculation(GPUMDCalculation):
             return float(state["T_max_used"])
         return float(self._rs_spec().T_max)
 
-    def rs_phase_transitions(self, criteria: TransitionCriteria | None = None) -> pd.DataFrame:
+    def rs_phase_transitions(self,
+                             criteria: TransitionCriteria | None = None
+                             ) -> pd.DataFrame:
         """``ti_rs`` の往路・復路で起きた相転移
         (:func:`~gpumd_toolkit.thermodynamics.rs_phase_transitions`)。"""
-        return rs_phase_transitions(
-            self.ti_table("ti_rs"), T0=self.rs_start_temperature(),
-            initial_phase=self.rs_initial_phase(),
-            criteria=criteria or self._rs_guard.get("criteria"))
+        return rs_phase_transitions(self.ti_table("ti_rs"),
+                                    T0=self.rs_start_temperature(),
+                                    initial_phase=self.rs_initial_phase(),
+                                    criteria=criteria
+                                    or self._rs_guard.get("criteria"))
 
     def rs_valid_range(self) -> dict:
         """G(T) を信用できる範囲と使う経路
         (:func:`~gpumd_toolkit.thermodynamics.rs_valid_range`)。"""
-        return rs_valid_range(
-            self.ti_table("ti_rs"), self.rs_phase_transitions(),
-            T0=self.rs_start_temperature(), T_end=self.rs_end_temperature(),
-            margin=self._rs_guard.get("margin", 0.03), criteria=self._rs_guard.get("criteria"))
+        return rs_valid_range(self.ti_table("ti_rs"),
+                              self.rs_phase_transitions(),
+                              T0=self.rs_start_temperature(),
+                              T_end=self.rs_end_temperature(),
+                              margin=self._rs_guard.get("margin", 0.03),
+                              criteria=self._rs_guard.get("criteria"))
 
     def rs_temperature_limit(self) -> float | None:
         """相転移を跨がない温度範囲の端 (全域が有効なら ``None``)。"""
@@ -534,8 +555,10 @@ class FreeEnergyCalculation(GPUMDCalculation):
             valid = self.rs_valid_range()
         except (ValueError, FileNotFoundError):
             return
-        items = ", ".join(f"{r.pass_} {r.process_ja} {r.T_K:.0f} K" for r in
-                          transitions.rename(columns={"pass": "pass_"}).itertuples())
+        items = ", ".join(f"{r.pass_} {r.process_ja} {r.T_K:.0f} K"
+                          for r in transitions.rename(columns={
+                              "pass": "pass_"
+                          }).itertuples())
         if len(transitions) or not valid["backward_returns"]:
             detail = items or valid["reason"]
             if not valid["backward_returns"] and items:
@@ -545,7 +568,10 @@ class FreeEnergyCalculation(GPUMDCalculation):
                 " transition_guard='truncate' / 'rerun' / 'precheck' を検討してください。",
                 RuntimeWarning)
 
-    def phase_summary(self, prefix: str = "analysis/rs_phases", *, dpi: int = 150) -> dict:
+    def phase_summary(self,
+                      prefix: str = "analysis/rs_phases",
+                      *,
+                      dpi: int = 150) -> dict:
         """可逆スケーリングで起きた融解・蒸発・凝固・昇華などをまとめる。
 
         ``<prefix>.csv`` (転移の表)、``<prefix>.md`` (読みやすい要約)、
@@ -557,58 +583,83 @@ class FreeEnergyCalculation(GPUMDCalculation):
         transitions = self.rs_phase_transitions()
         valid = self.rs_valid_range()
         limit = valid["limit"]
-        forward = transitions[transitions["pass"] == "forward"] if len(transitions) else transitions
-        backward = transitions[transitions["pass"] == "backward"] if len(transitions) else transitions
+        forward = transitions[transitions["pass"] == "forward"] if len(
+            transitions) else transitions
+        backward = transitions[transitions["pass"] == "backward"] if len(
+            transitions) else transitions
         summary: dict = {
-            "T_start_K": T0,
-            "T_end_K": self.rs_end_temperature(),
-            "T_end_requested_K": self._rs_guard.get("T_max_requested"),
-            "initial_phase": self.rs_initial_phase(),
-            "guard_mode": self._rs_guard.get("mode", "off"),
-            "rs_directory": str(self.rs_directory()),
-            "n_transitions": int(len(transitions)),
-            "safe_limit_K": limit,
-            "branch": valid["branch"],
-            "backward_returns": valid["backward_returns"],
-            "dH_backward_minus_forward_at_T0": valid["dH_at_T0"],
-            "processes": [f"{r.pass_}:{r.process}" for r in
-                          transitions.rename(columns={"pass": "pass_"}).itertuples()],
+            "T_start_K":
+            T0,
+            "T_end_K":
+            self.rs_end_temperature(),
+            "T_end_requested_K":
+            self._rs_guard.get("T_max_requested"),
+            "initial_phase":
+            self.rs_initial_phase(),
+            "guard_mode":
+            self._rs_guard.get("mode", "off"),
+            "rs_directory":
+            str(self.rs_directory()),
+            "n_transitions":
+            int(len(transitions)),
+            "safe_limit_K":
+            limit,
+            "branch":
+            valid["branch"],
+            "backward_returns":
+            valid["backward_returns"],
+            "dH_backward_minus_forward_at_T0":
+            valid["dH_at_T0"],
+            "processes": [
+                f"{r.pass_}:{r.process}"
+                for r in transitions.rename(columns={
+                    "pass": "pass_"
+                }).itertuples()
+            ],
         }
         # 昇温での融解と降温での凝固が両方あれば、ヒステリシスから融点を見積もる
-        heat = transitions[(transitions.get("process") == "melting")] if len(transitions) else []
-        cool = transitions[(transitions.get("process") == "freezing")] if len(transitions) else []
+        heat = transitions[(transitions.get("process")
+                            == "melting")] if len(transitions) else []
+        cool = transitions[(transitions.get("process")
+                            == "freezing")] if len(transitions) else []
         # 復路が出発相に戻っていなければ、復路の「凝固」は結晶化ではない (目安にならない)
         if len(heat) and len(cool) and valid["backward_returns"]:
             summary["T_melting_heating_K"] = float(heat["T_K"].iloc[0])
             summary["T_freezing_cooling_K"] = float(cool["T_K"].iloc[0])
             summary["Tm_hysteresis_estimate_K"] = hysteresis_melting_estimate(
-                summary["T_melting_heating_K"], summary["T_freezing_cooling_K"])
+                summary["T_melting_heating_K"],
+                summary["T_freezing_cooling_K"])
         curve = None
         reference = self.reference_point("ti_rs")
         if reference is not None:
-            curve = free_energy_reversible_scaling(table, T0=T0, G0=reference[1],
+            curve = free_energy_reversible_scaling(table,
+                                                   T0=T0,
+                                                   G0=reference[1],
                                                    branch=valid["branch"])
         output = self.workdir / prefix
         output.parent.mkdir(parents=True, exist_ok=True)
         transitions.to_csv(output.with_suffix(".csv"), index=False)
         direction = "昇温" if self.rs_end_temperature() > T0 else "降温"
         lines = [
-            f"# 可逆スケーリングの相転移 — {self.name}", "",
+            f"# 可逆スケーリングの相転移 — {self.name}",
+            "",
             f"- スキャン: {T0:g} K → {self.rs_end_temperature():g} K ({direction}、往路)"
             f" と復路、出発相: {self.rs_initial_phase()}",
             f"- 調整機能 (transition_guard): {summary['guard_mode']}",
         ]
-        if summary["T_end_requested_K"] not in (None, self.rs_end_temperature()):
-            lines.append(f"- 終点を {summary['T_end_requested_K']:g} K から "
-                         f"{self.rs_end_temperature():g} K に調整 ({self.rs_directory()})")
+        if summary["T_end_requested_K"] not in (None,
+                                                self.rs_end_temperature()):
+            lines.append(
+                f"- 終点を {summary['T_end_requested_K']:g} K から "
+                f"{self.rs_end_temperature():g} K に調整 ({self.rs_directory()})")
         lines.append(
             f"- 往路: {', '.join(forward['process_ja']) if len(forward) else '転移なし'} / "
-            f"復路: {', '.join(backward['process_ja']) if len(backward) else '転移なし'}")
+            f"復路: {', '.join(backward['process_ja']) if len(backward) else '転移なし'}"
+        )
         if not valid["backward_returns"]:
-            lines.append(
-                f"- 復路は出発相に戻っていません (T0 付近で H_復路 − H_往路 = "
-                f"{valid['dH_at_T0']:+.4f} eV/atom)。折り返し点の保持中などに転移して"
-                " 戻らなかったため、G(T) は往路のみから求めます。")
+            lines.append(f"- 復路は出発相に戻っていません (T0 付近で H_復路 − H_往路 = "
+                         f"{valid['dH_at_T0']:+.4f} eV/atom)。折り返し点の保持中などに転移して"
+                         " 戻らなかったため、G(T) は往路のみから求めます。")
         if limit is not None:
             lo, hi = sorted((T0, limit))
             lines.append(f"- 相転移を跨がない範囲: {lo:.0f}–{hi:.0f} K"
@@ -621,22 +672,40 @@ class FreeEnergyCalculation(GPUMDCalculation):
             lines.append(
                 f"- ヒステリシスからの融点の目安: {summary['Tm_hysteresis_estimate_K']:.0f} K "
                 f"(昇温 {summary['T_melting_heating_K']:.0f} K / 降温 "
-                f"{summary['T_freezing_cooling_K']:.0f} K、Tm = T+ + T- - sqrt(T+ T-))")
+                f"{summary['T_freezing_cooling_K']:.0f} K、Tm = T+ + T- - sqrt(T+ T-))"
+            )
         lines += ["", format_transitions(transitions, title="検出した相転移")]
-        output.with_suffix(".md").write_text("\n".join(lines), encoding="utf-8")
-        png = plot_rs_phases(table, transitions, output.with_suffix(".png"), T0=T0, limit=limit,
-                             curve=curve, title=f"可逆スケーリングの相転移 — {self.name}", dpi=dpi)
+        output.with_suffix(".md").write_text("\n".join(lines),
+                                             encoding="utf-8")
+        png = plot_rs_phases(table,
+                             transitions,
+                             output.with_suffix(".png"),
+                             T0=T0,
+                             limit=limit,
+                             curve=curve,
+                             title=f"可逆スケーリングの相転移 — {self.name}",
+                             dpi=dpi)
         (output.parent / f"{output.name}.json").write_text(
             json.dumps(summary, indent=2, ensure_ascii=False, default=float))
-        return {**summary, "csv": output.with_suffix(".csv"), "markdown": output.with_suffix(".md"),
-                "png": png}
+        return {
+            **summary, "csv": output.with_suffix(".csv"),
+            "markdown": output.with_suffix(".md"),
+            "png": png
+        }
 
-    def _sub_calculation(self, workdir: Path, stages: list) -> "FreeEnergyCalculation":
+    def _sub_calculation(self, workdir: Path,
+                         stages: list) -> "FreeEnergyCalculation":
         """同じ構造・ポテンシャル・設定で、ステージだけ差し替えた計算を作る。"""
         sub = FreeEnergyCalculation(
-            self.atoms, self.potential, workdir, overwrite=True, name=f"{self.name}/{workdir.name}",
-            time_step=self.builder.time_step, environment=self.environment,
-            groupings=self.groupings, max_atoms=max(self.max_atoms, self.n_atoms),
+            self.atoms,
+            self.potential,
+            workdir,
+            overwrite=True,
+            name=f"{self.name}/{workdir.name}",
+            time_step=self.builder.time_step,
+            environment=self.environment,
+            groupings=self.groupings,
+            max_atoms=max(self.max_atoms, self.n_atoms),
             save_final_structure=False,
         )
         builder = copy.deepcopy(self.builder)
@@ -648,39 +717,59 @@ class FreeEnergyCalculation(GPUMDCalculation):
     def _stages_before_rs(self) -> list:
         """ti_rs より前の平衡化ステージ (TI 以外) の複製。"""
         index = self._rs_stage_index()
-        return [copy.deepcopy(stage) for stage in self.stages[:index]
-                if not stage.ensemble_name.startswith("ti")]
+        return [
+            copy.deepcopy(stage) for stage in self.stages[:index]
+            if not stage.ensemble_name.startswith("ti")
+        ]
 
-    def _run_precheck(self, *, timeout: float | None = None, check: bool = True) -> dict:
+    def _run_precheck(self,
+                      *,
+                      timeout: float | None = None,
+                      check: bool = True) -> dict:
         """短い NPT ランプで相転移を探し、ti_rs の終点を転移の手前に寄せる。"""
         guard = self._rs_guard
         index = self._rs_stage_index()
         spec = self._rs_spec()
         steps = guard["precheck_steps"]
-        pre = self._sub_calculation(self.workdir / "rs_precheck", self._stages_before_rs())
+        pre = self._sub_calculation(self.workdir / "rs_precheck",
+                                    self._stages_before_rs())
         pre.set_dump(thermo=max(1, steps // 2000), traj=None)
-        pre.npt(temperature=spec.T_min, temperature_end=guard["T_max_requested"], steps=steps,
-                pressure=spec.pressure, barostat=guard["precheck_barostat"])
+        pre.npt(temperature=spec.T_min,
+                temperature_end=guard["T_max_requested"],
+                steps=steps,
+                pressure=spec.pressure,
+                barostat=guard["precheck_barostat"])
         result = pre.run(timeout=timeout, check=check)
-        state: dict = {"precheck_dir": str(pre.workdir), "precheck_ok": result.succeeded}
+        state: dict = {
+            "precheck_dir": str(pre.workdir),
+            "precheck_ok": result.succeeded
+        }
         if not result.succeeded:
             warnings.warn("相転移の事前チェックが失敗しました。ti_rs は指定どおり走らせます。",
                           RuntimeWarning)
             return self._save_guard_state(**state)
         from ..analysis import ThermoData
 
-        frame = ThermoData.from_directory(pre.workdir, n_atoms=self.n_atoms).frame
+        frame = ThermoData.from_directory(pre.workdir,
+                                          n_atoms=self.n_atoms).frame
         ramp = frame[frame["stage"] == frame["stage"].max()]
         pressure = float(ramp["pressure"].mean())
-        enthalpy = (ramp["total_energy_per_atom"]
-                    + pressure * ramp["volume_per_atom"] / 160.21766208)
-        direction = "heating" if guard["T_max_requested"] > spec.T_min else "cooling"
+        enthalpy = (ramp["total_energy_per_atom"] +
+                    pressure * ramp["volume_per_atom"] / 160.21766208)
+        direction = "heating" if guard[
+            "T_max_requested"] > spec.T_min else "cooling"
         transitions = detect_phase_transitions(
-            ramp["target_temperature"], enthalpy, volume=ramp["volume_per_atom"],
-            direction=direction, initial_phase=self.rs_initial_phase(),
+            ramp["target_temperature"],
+            enthalpy,
+            volume=ramp["volume_per_atom"],
+            direction=direction,
+            initial_phase=self.rs_initial_phase(),
             criteria=guard["criteria"])
         transitions.to_csv(pre.workdir / "transitions.csv", index=False)
-        limit = rs_safe_limit(transitions, T0=spec.T_min, T_end=guard["T_max_requested"],
+        #FIXME:往路優先に設計
+        limit = rs_safe_limit(transitions,
+                              T0=spec.T_min,
+                              T_end=guard["T_max_requested"],
                               margin=guard["margin"])
         state["precheck_transitions"] = transitions.to_dict("records")
         if limit is not None and abs(limit - spec.T_min) > 1.0:
@@ -691,22 +780,29 @@ class FreeEnergyCalculation(GPUMDCalculation):
             for record in self.ti_stages:
                 if record["kind"] == "ti_rs":
                     record["T_max"] = limit
-            items = ", ".join(f"{r.process_ja} {r.T_K:.0f} K" for r in transitions.itertuples())
-            warnings.warn(f"事前チェックで相転移を検出 ({items})。ti_rs の終点を "
-                          f"{guard['T_max_requested']:g} K → {limit:.0f} K にしました。",
-                          RuntimeWarning)
+            items = ", ".join(f"{r.process_ja} {r.T_K:.0f} K"
+                              for r in transitions.itertuples())
+            warnings.warn(
+                f"事前チェックで相転移を検出 ({items})。ti_rs の終点を "
+                f"{guard['T_max_requested']:g} K → {limit:.0f} K にしました。",
+                RuntimeWarning)
             state["T_max_used"] = limit
         elif limit is not None:
             warnings.warn("事前チェックで出発温度のすぐ近くに相転移があり、終点を調整できません。",
                           RuntimeWarning)
         return self._save_guard_state(**state)
 
-    def _rerun_guard(self, *, timeout: float | None = None, check: bool = True) -> dict:
+    def _rerun_guard(self,
+                     *,
+                     timeout: float | None = None,
+                     check: bool = True) -> dict:
         """転移を跨いでいたら終点を手前にして ti_rs を撮り直す。"""
         guard = self._rs_guard
         spec = self._rs_spec()
         reference = self.reference_point("ti_rs")
-        state = self._save_guard_state(rs_dir=None, T_max_used=None, iterations=0)
+        state = self._save_guard_state(rs_dir=None,
+                                       T_max_used=None,
+                                       iterations=0)
         for iteration in range(1, guard["max_rerun"] + 1):
             transitions = self.rs_phase_transitions()
             valid = self.rs_valid_range()
@@ -715,31 +811,43 @@ class FreeEnergyCalculation(GPUMDCalculation):
                 limit = valid["limit"]
             elif not valid["backward_returns"]:
                 # 往路に段差が無いのに戻らない = 折り返し点の保持中に転移した
-                limit = spec.T_min + (1.0 - guard["shrink"]) * (T_end - spec.T_min)
+                limit = spec.T_min + (1.0 - guard["shrink"]) * (T_end -
+                                                                spec.T_min)
             else:
                 break
-            if abs(limit - spec.T_min) < 0.02 * abs(guard["T_max_requested"] - spec.T_min):
+            if abs(limit - spec.T_min) < 0.02 * abs(guard["T_max_requested"] -
+                                                    spec.T_min):
                 warnings.warn("出発温度のすぐ近くに相転移があり、撮り直しても範囲がほぼ残りません。",
                               RuntimeWarning)
                 break
-            items = ", ".join(f"{r.process_ja} {r.T_K:.0f} K" for r in transitions.itertuples())
+            items = ", ".join(f"{r.process_ja} {r.T_K:.0f} K"
+                              for r in transitions.itertuples())
             if not valid["backward_returns"]:
                 items = ", ".join(filter(None, [items, "復路が出発相に戻らない"]))
-            warnings.warn(f"ti_rs が相転移を跨いでいます ({items})。終点を {limit:.0f} K にして"
-                          f"撮り直します ({iteration}/{guard['max_rerun']})。", RuntimeWarning)
+            warnings.warn(
+                f"ti_rs が相転移を跨いでいます ({items})。終点を {limit:.0f} K にして"
+                f"撮り直します ({iteration}/{guard['max_rerun']})。", RuntimeWarning)
             stages = self._stages_before_rs()
-            sub = self._sub_calculation(self.workdir / f"rs_guard_{iteration}", stages)
-            sub.reversible_scaling(
-                T_min=spec.T_min, T_max=limit, pressure=spec.pressure, direction=spec.direction,
-                t_equil=spec.t_equil, t_switch=spec.t_switch, tau_T=spec.tau_T, tau_p=spec.tau_p,
-                reference=reference, initial_phase=self.rs_initial_phase())
+            sub = self._sub_calculation(self.workdir / f"rs_guard_{iteration}",
+                                        stages)
+            sub.reversible_scaling(T_min=spec.T_min,
+                                   T_max=limit,
+                                   pressure=spec.pressure,
+                                   direction=spec.direction,
+                                   t_equil=spec.t_equil,
+                                   t_switch=spec.t_switch,
+                                   tau_T=spec.tau_T,
+                                   tau_p=spec.tau_p,
+                                   reference=reference,
+                                   initial_phase=self.rs_initial_phase())
             sub.stages[-1].ensemble = dataclasses.replace(
                 spec, T_max=limit)  # T_coup / p_period も元のまま
             result = sub.run(timeout=timeout, check=check)
             if not result.succeeded:
                 warnings.warn("ti_rs の撮り直しが失敗しました。", RuntimeWarning)
                 break
-            state = self._save_guard_state(rs_dir=str(sub.workdir), T_max_used=limit,
+            state = self._save_guard_state(rs_dir=str(sub.workdir),
+                                           T_max_used=limit,
                                            iterations=iteration)
         return state
 
@@ -751,8 +859,12 @@ class FreeEnergyCalculation(GPUMDCalculation):
             path = self.workdir / f"{kind}.yaml"
             if path.is_file():
                 data = gibbs_from_ti(read_ti_yaml(path))
-                points.append({"kind": kind, "temperature": float(data["T"]),
-                               "F": float(data["F"]), "G": float(data["G"])})
+                points.append({
+                    "kind": kind,
+                    "temperature": float(data["T"]),
+                    "F": float(data["F"]),
+                    "G": float(data["G"])
+                })
         return points
 
     def reference_point(self, kind: str) -> tuple[float, float] | None:
@@ -761,7 +873,8 @@ class FreeEnergyCalculation(GPUMDCalculation):
         if kind == "ti_rs" and self._rs_reference is not None:
             return self._rs_reference
         if kind == "ti_as" and self._as_reference is not None:
-            return (stage["temperature"] if stage else float("nan"), self._as_reference)
+            return (stage["temperature"] if stage else float("nan"),
+                    self._as_reference)
         if stage is None:
             return None
         target = stage["T_min"] if kind == "ti_rs" else stage["temperature"]
@@ -777,25 +890,33 @@ class FreeEnergyCalculation(GPUMDCalculation):
         基準のある ``ti_as`` の出発点 (T, G0) を含む。基準の無い ``ti_rs`` は含めない
         (G0 が無いと G(T) は決まらない)。
         """
-        rows = [
-            {"source": p["kind"], "temperature": p["temperature"], "G": p["G"]}
-            for p in self.absolute_points()
-        ]
-        if (self.workdir / "ti_rs.csv").is_file() and self.reference_point("ti_rs") is not None:
+        rows = [{
+            "source": p["kind"],
+            "temperature": p["temperature"],
+            "G": p["G"]
+        } for p in self.absolute_points()]
+        if (self.workdir / "ti_rs.csv"
+            ).is_file() and self.reference_point("ti_rs") is not None:
             curve = self.free_energy_curve(kind="ti_rs")
-            rows += [
-                {"source": "ti_rs", "temperature": float(t), "G": float(g)}
-                for t, g in zip(curve["temperature"], curve["G"])
-            ]
+            rows += [{
+                "source": "ti_rs",
+                "temperature": float(t),
+                "G": float(g)
+            } for t, g in zip(curve["temperature"], curve["G"])]
         if (self.workdir / "ti_as.csv").is_file():
             reference = self.reference_point("ti_as")
             if reference is not None and np.isfinite(reference[0]):
-                rows.append({"source": "ti_as", "temperature": reference[0], "G": reference[1]})
+                rows.append({
+                    "source": "ti_as",
+                    "temperature": reference[0],
+                    "G": reference[1]
+                })
         return pd.DataFrame(rows, columns=["source", "temperature", "G"])
 
-    def plot_free_energy(
-        self, filename: str = "analysis/G_T.png", *, dpi: int = 150
-    ) -> Path:
+    def plot_free_energy(self,
+                         filename: str = "analysis/G_T.png",
+                         *,
+                         dpi: int = 150) -> Path:
         """G–T グラフを描く (``ti_as`` があれば G–P も並べる)。
 
         ``ti_rs`` の基準 (T0, G0) が無い場合は G(T) を決められないので、その旨を図中に
@@ -808,28 +929,48 @@ class FreeEnergyCalculation(GPUMDCalculation):
 
         table = self.g_t_table()
         has_as = (self.workdir / "ti_as.csv").is_file()
-        figure, axes = plt.subplots(1, 2 if has_as else 1, figsize=(11 if has_as else 6.5, 4.5))
+        figure, axes = plt.subplots(1,
+                                    2 if has_as else 1,
+                                    figsize=(11 if has_as else 6.5, 4.5))
         axes = np.atleast_1d(axes)
         axis = axes[0]
         rs = table[table["source"] == "ti_rs"].sort_values("temperature")
         if not rs.empty:
-            axis.plot(rs["temperature"], rs["G"], lw=1.6, color="C0", label="ti_rs")
-        markers = {"ti_spring": ("o", "C3"), "ti_liquid": ("s", "C1"), "ti_as": ("D", "C2")}
+            axis.plot(rs["temperature"],
+                      rs["G"],
+                      lw=1.6,
+                      color="C0",
+                      label="ti_rs")
+        markers = {
+            "ti_spring": ("o", "C3"),
+            "ti_liquid": ("s", "C1"),
+            "ti_as": ("D", "C2")
+        }
         for kind, (marker, color) in markers.items():
             points = table[table["source"] == kind]
             if not points.empty:
-                axis.plot(points["temperature"], points["G"], marker, color=color, ms=7,
-                          label=f"{kind} (T={points['temperature'].iloc[0]:g} K)")
+                axis.plot(
+                    points["temperature"],
+                    points["G"],
+                    marker,
+                    color=color,
+                    ms=7,
+                    label=f"{kind} (T={points['temperature'].iloc[0]:g} K)")
         missing_rs = (self.workdir / "ti_rs.csv").is_file() and rs.empty
         if missing_rs:
             forward, _ = _forward_backward_table(self.ti_table("ti_rs"))
-            stage = next((s for s in self.ti_stages if s["kind"] == "ti_rs"), None)
+            stage = next((s for s in self.ti_stages if s["kind"] == "ti_rs"),
+                         None)
             T0 = stage["T_min"] if stage else float("nan")
             twin = axis.twinx()
-            twin.plot(T0 / forward["lambda"], forward["enthalpy"], lw=1.0, color="0.5")
+            twin.plot(T0 / forward["lambda"],
+                      forward["enthalpy"],
+                      lw=1.0,
+                      color="0.5")
             twin.set_ylabel("ti_rs H (eV/atom)", color="0.4")
             axis.set_title(label("ti_rs の基準 (T0, G0) が未指定のため G(T) を描けません"
-                                 " — reversible_scaling(reference=(T0, G0))"), fontsize=8)
+                                 " — reversible_scaling(reference=(T0, G0))"),
+                           fontsize=8)
             warnings.warn(
                 "ti_rs の基準 (T0, G0) が無いため G(T) を描けません。"
                 " reversible_scaling(reference=(T0, G0)) を指定するか、"
@@ -837,8 +978,12 @@ class FreeEnergyCalculation(GPUMDCalculation):
                 RuntimeWarning,
             )
         if table.empty and not missing_rs:
-            axis.text(0.5, 0.5, label("G–T の出力がありません"),
-                      ha="center", va="center", transform=axis.transAxes)
+            axis.text(0.5,
+                      0.5,
+                      label("G–T の出力がありません"),
+                      ha="center",
+                      va="center",
+                      transform=axis.transAxes)
         axis.set_xlabel("T (K)")
         axis.set_ylabel("G (eV/atom)")
         axis.grid(alpha=0.3)
@@ -850,7 +995,8 @@ class FreeEnergyCalculation(GPUMDCalculation):
                 curve = self.free_energy_curve(kind="ti_as")
                 ax_p.set_ylabel("G (eV/atom)")
             except ValueError:  # 基準が無い場合は G - G0 を描く
-                curve = free_energy_adiabatic_switching(self.ti_table("ti_as"), G0=0.0)
+                curve = free_energy_adiabatic_switching(self.ti_table("ti_as"),
+                                                        G0=0.0)
                 ax_p.set_ylabel("G - G0 (eV/atom)")
             ax_p.plot(curve["pressure_GPa"], curve["G"], lw=1.6, color="C2")
             ax_p.set_xlabel("P (GPa)")
@@ -878,10 +1024,12 @@ class FreeEnergyCalculation(GPUMDCalculation):
             # 前回のガードの記録 (撮り直しのディレクトリなど) を引き継がない
             self._guard_path().unlink(missing_ok=True)
         if has_rs and mode == "precheck" and not dry_run:
-            self._run_precheck(timeout=kwargs.get("timeout"), check=kwargs.get("check", True))
+            self._run_precheck(timeout=kwargs.get("timeout"),
+                               check=kwargs.get("check", True))
         result = super().run(analyze=analyze, **kwargs)
         if has_rs and result.succeeded and mode == "rerun":
-            self._rerun_guard(timeout=kwargs.get("timeout"), check=kwargs.get("check", True))
+            self._rerun_guard(timeout=kwargs.get("timeout"),
+                              check=kwargs.get("check", True))
         if analyze and result.succeeded:
             try:
                 self.plot_free_energy()
@@ -902,10 +1050,9 @@ class FreeEnergyCalculation(GPUMDCalculation):
         from ..postprocess import _forward_backward
 
         table = self.ti_table(kind)
-        column = (
-            "enthalpy" if "enthalpy" in table
-            else ("V" if "V" in table else ("pe" if "pe" in table else table.columns[-1]))
-        )
+        column = ("enthalpy" if "enthalpy" in table else
+                  ("V" if "V" in table else
+                   ("pe" if "pe" in table else table.columns[-1])))
         forward_frame, backward_frame = _forward_backward(table)
         forward = forward_frame[column].to_numpy()
         backward = backward_frame[column].to_numpy()
@@ -913,21 +1060,24 @@ class FreeEnergyCalculation(GPUMDCalculation):
         return {
             "column": column,
             "max_abs": float(abs(difference).max()),
-            "rms": float((difference**2).mean() ** 0.5),
+            "rms": float((difference**2).mean()**0.5),
             "mean": float(difference.mean()),
         }
 
 
-def _ascending_curve(curve: pd.DataFrame, column: str) -> tuple[np.ndarray, np.ndarray]:
+def _ascending_curve(curve: pd.DataFrame,
+                     column: str) -> tuple[np.ndarray, np.ndarray]:
     """G(T) を温度の昇順に並べ替え、同じ温度は平均する (np.interp は昇順が前提)。"""
     frame = curve[[column, "G"]].dropna()
     frame = frame.groupby(column, as_index=False, sort=True)["G"].mean()
-    return frame[column].to_numpy(dtype=float), frame["G"].to_numpy(dtype=float)
+    return frame[column].to_numpy(dtype=float), frame["G"].to_numpy(
+        dtype=float)
 
 
-def melting_point_from_curves(
-    solid: pd.DataFrame, liquid: pd.DataFrame, *, column: str = "temperature"
-) -> float:
+def melting_point_from_curves(solid: pd.DataFrame,
+                              liquid: pd.DataFrame,
+                              *,
+                              column: str = "temperature") -> float:
     """固相・液相の G(T) 曲線が交わる温度 [K] を返す (二相法の代替)。
 
     曲線は温度の昇順・降順どちらでもよい (液体を 5000→1000 K と降温スキャンした
@@ -955,10 +1105,8 @@ def melting_point_from_curves(
     if zero.size and (crossings.size == 0 or zero[0] <= crossings[0]):
         return float(T[zero[0]])
     if crossings.size == 0:
-        raise ValueError(
-            "G(T) 曲線が交差しません。温度範囲を広げるか、"
-            " 参照自由エネルギー G0 を確認してください。"
-        )
+        raise ValueError("G(T) 曲線が交差しません。温度範囲を広げるか、"
+                         " 参照自由エネルギー G0 を確認してください。")
     i = int(crossings[0])
     # 線形内挿
     t0, t1 = T[i], T[i + 1]
@@ -998,18 +1146,29 @@ def plot_free_energy_curves(
     colors = {}
     for i, (name, curve) in enumerate(curves.items()):
         ordered = curve.sort_values("temperature")
-        (line,) = axis.plot(ordered["temperature"], ordered["G"], lw=1.6, label=name)
+        (line, ) = axis.plot(ordered["temperature"],
+                             ordered["G"],
+                             lw=1.6,
+                             label=name)
         colors[name] = line.get_color()
     for name, values in (points or {}).items():
         values = list(values)
         if values:
-            axis.plot([t for t, _ in values], [g for _, g in values], "o",
-                      color=colors.get(name), ms=6, mfc="white", label=f"{name} ({point_label})")
+            axis.plot([t for t, _ in values], [g for _, g in values],
+                      "o",
+                      color=colors.get(name),
+                      ms=6,
+                      mfc="white",
+                      label=f"{name} ({point_label})")
     names = list(curves)
     if melting_point and len(names) == 2:
         try:
             tm = melting_point_from_curves(curves[names[0]], curves[names[1]])
-            axis.axvline(tm, color="k", ls="--", lw=0.9, label=f"crossing T = {tm:.0f} K")
+            axis.axvline(tm,
+                         color="k",
+                         ls="--",
+                         lw=0.9,
+                         label=f"crossing T = {tm:.0f} K")
         except ValueError as exc:
             warnings.warn(str(exc), RuntimeWarning)
     axis.set_xlabel("T (K)")

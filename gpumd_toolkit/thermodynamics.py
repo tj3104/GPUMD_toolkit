@@ -40,9 +40,9 @@ __all__ = [
     "thermodynamic_scan",
 ]
 
-KB_EV = 8.617333262e-5          # eV/K
-R_J_MOL_K = 8.314462618         # J/(mol K) = kB per atom * N_A
-EV_TO_KJ_MOL = 96.48533212      # eV/atom -> kJ/mol
+KB_EV = 8.617333262e-5  # eV/K
+R_J_MOL_K = 8.314462618  # J/(mol K) = kB per atom * N_A
+EV_TO_KJ_MOL = 96.48533212  # eV/atom -> kJ/mol
 GPA_A3_TO_EV = 1.0 / 160.21766208
 AMU_A3_TO_G_CM3 = 1.66053906660  # amu/Å^3 -> g/cm^3
 
@@ -61,11 +61,20 @@ PROCESS_JA = {
 PHASE_JA = {"solid": "固相", "liquid": "液相", "gas": "気相", "unknown": "不明"}
 
 _TRANSITION_COLUMNS = [
-    "direction", "process", "process_ja", "from_phase", "to_phase",
-    "T_K", "T_onset_K", "T_end_K",
-    "delta_H_eV_per_atom", "latent_heat_kJ_per_mol",
-    "delta_S_kB_per_atom", "delta_S_J_per_mol_K",
-    "volume_ratio", "significance",
+    "direction",
+    "process",
+    "process_ja",
+    "from_phase",
+    "to_phase",
+    "T_K",
+    "T_onset_K",
+    "T_end_K",
+    "delta_H_eV_per_atom",
+    "latent_heat_kJ_per_mol",
+    "delta_S_kB_per_atom",
+    "delta_S_J_per_mol_K",
+    "volume_ratio",
+    "significance",
 ]
 
 
@@ -111,9 +120,13 @@ def _bin_scan(x: np.ndarray, columns: dict[str, np.ndarray], n_bins: int):
     index = np.clip(np.digitize(x, edges) - 1, 0, n_bins - 1)
     counts = np.bincount(index, minlength=n_bins).astype(float)
     keep = counts > 0
-    out = {"T": (np.bincount(index, x, minlength=n_bins) / np.maximum(counts, 1))[keep]}
+    out = {
+        "T":
+        (np.bincount(index, x, minlength=n_bins) / np.maximum(counts, 1))[keep]
+    }
     for name, values in columns.items():
-        out[name] = (np.bincount(index, values, minlength=n_bins) / np.maximum(counts, 1))[keep]
+        out[name] = (np.bincount(index, values, minlength=n_bins) /
+                     np.maximum(counts, 1))[keep]
     return out
 
 
@@ -129,7 +142,8 @@ def _noise(y: np.ndarray) -> float:
         return float(np.std(y)) or 1e-12
     d2 = y[2:] - 2.0 * y[1:-1] + y[:-2]
     sigma = 1.4826 * np.median(np.abs(d2 - np.median(d2))) / np.sqrt(6.0)
-    return float(sigma) if sigma > 0 else float(np.std(d2) / np.sqrt(6.0)) or 1e-12
+    return float(sigma) if sigma > 0 else float(np.std(d2) /
+                                                np.sqrt(6.0)) or 1e-12
 
 
 def _step_profile(x: np.ndarray, y: np.ndarray, w: int) -> np.ndarray:
@@ -154,7 +168,8 @@ def _refine(x, y, i, w):
         fraction = (y[core] - np.polyval(left, x[core])) / gap
     fraction = np.where(np.isfinite(fraction), fraction, 0.5)
     # 転移温度: fraction が 0.5 を横切る点 (i に最も近いもの)
-    crossing = np.flatnonzero((fraction[:-1] - 0.5) * (fraction[1:] - 0.5) <= 0)
+    crossing = np.flatnonzero((fraction[:-1] - 0.5) *
+                              (fraction[1:] - 0.5) <= 0)
     if crossing.size:
         k = crossing[np.argmin(np.abs(core[crossing] - i))]
         f0, f1 = fraction[k], fraction[k + 1]
@@ -186,9 +201,17 @@ def _classify_sequence(rows, direction, initial_phase, final_phase, criteria):
     液相内・アモルファス化の小さな段差が出たりするため)。それより前後の小さな段差は
     固相間転移 / 液相内の転移とする。``delta_H`` は常に 高温相 − 低温相。
     """
-    gas = [_is_gas(r["delta_S_kB_per_atom"], r["volume_ratio"], criteria) for r in rows]
-    condensed = [i for i, r in enumerate(rows) if not gas[i] and r["delta_H_eV_per_atom"] > 0]
-    main = max(condensed, key=lambda i: rows[i]["delta_S_kB_per_atom"]) if condensed else None
+    gas = [
+        _is_gas(r["delta_S_kB_per_atom"], r["volume_ratio"], criteria)
+        for r in rows
+    ]
+    condensed = [
+        i for i, r in enumerate(rows)
+        if not gas[i] and r["delta_H_eV_per_atom"] > 0
+    ]
+    main = max(
+        condensed,
+        key=lambda i: rows[i]["delta_S_kB_per_atom"]) if condensed else None
     heating = direction == "heating"
     current = initial_phase
     labels = []
@@ -197,18 +220,23 @@ def _classify_sequence(rows, direction, initial_phase, final_phase, criteria):
         before = current
         if row["delta_H_eV_per_atom"] <= 0:
             # 昇温で発熱 (過冷却液体の結晶化など) / 降温で吸熱
-            process, after = (("freezing", "solid") if heating and current in ("liquid", "unknown")
-                              else ("unknown", current))
+            process, after = (("freezing", "solid") if heating
+                              and current in ("liquid", "unknown") else
+                              ("unknown", current))
         elif gas[i]:
             if heating:
-                process, after = (("sublimation", "gas") if current == "solid"
-                                  else ("evaporation", "gas") if current in ("liquid", "unknown")
-                                  else ("unknown", current))
+                process, after = (("sublimation",
+                                   "gas") if current == "solid" else
+                                  ("evaporation",
+                                   "gas") if current in ("liquid",
+                                                         "unknown") else
+                                  ("unknown", current))
             else:
                 if current in ("gas", "unknown"):
-                    process, after = (("deposition", "solid")
-                                      if final_phase == "solid" and remaining == 1
-                                      else ("condensation", "liquid"))
+                    process, after = (("deposition",
+                                       "solid") if final_phase == "solid"
+                                      and remaining == 1 else
+                                      ("condensation", "liquid"))
                 else:
                     process, after = "unknown", current
         elif heating:
@@ -221,7 +249,8 @@ def _classify_sequence(rows, direction, initial_phase, final_phase, criteria):
             else:
                 process, after = "unknown", current
         else:
-            if current in ("liquid", "unknown") and (i == main or main is None):
+            if current in ("liquid", "unknown") and (i == main
+                                                     or main is None):
                 process, after = "freezing", "solid"
             elif current == "liquid":
                 process, after = "liquid_liquid", "liquid"
@@ -286,7 +315,12 @@ def detect_phase_transitions(
     if len(T) < 4 * w or np.ptp(T) <= 0:
         return empty
 
-    binned = _bin_scan(T, {"H": H, **({"V": V} if V is not None else {})}, criteria.n_bins)
+    binned = _bin_scan(T, {
+        "H": H,
+        **({
+            "V": V
+        } if V is not None else {})
+    }, criteria.n_bins)
     x, y = binned["T"], binned["H"]
     if len(x) < 4 * w:
         w = max(3, len(x) // 4)
@@ -313,27 +347,45 @@ def detect_phase_transitions(
             _, _, _, _, vl, vr = _refine(x, binned["V"], i, w)
             low, high = np.polyval(vl, T_tr), np.polyval(vr, T_tr)
             ratio = float(high / low) if low > 0 else np.nan
-        found.append({"T_K": T_tr, "T_onset_K": T_on, "T_end_K": T_off,
-                      "delta_H_eV_per_atom": delta, "delta_S_kB_per_atom": dS,
-                      "volume_ratio": ratio,
-                      "significance": abs(step[i]) / sigma_step})
+        found.append({
+            "T_K": T_tr,
+            "T_onset_K": T_on,
+            "T_end_K": T_off,
+            "delta_H_eV_per_atom": delta,
+            "delta_S_kB_per_atom": dS,
+            "volume_ratio": ratio,
+            "significance": abs(step[i]) / sigma_step
+        })
     # 幅の広い 1 つの段差を 2 回数えないよう、転移区間が重なるものは大きい方だけ残す
     found.sort(key=lambda row: -row["significance"])
     kept: list[dict] = []
     for row in found:
-        if all(row["T_end_K"] < k["T_onset_K"] or row["T_onset_K"] > k["T_end_K"] for k in kept):
+        if all(row["T_end_K"] < k["T_onset_K"]
+               or row["T_onset_K"] > k["T_end_K"] for k in kept):
             kept.append(row)
     found = kept
     # スキャン順 (昇温なら低温から、降温なら高温から) に相をたどって分類する
     found.sort(key=lambda row: row["T_K"], reverse=(direction == "cooling"))
     rows = []
-    labels = _classify_sequence(found, direction, initial_phase, final_phase, criteria)
+    labels = _classify_sequence(found, direction, initial_phase, final_phase,
+                                criteria)
     for row, (process, before, after) in zip(found, labels):
         rows.append({
-            "direction": direction, "process": process, "process_ja": PROCESS_JA[process],
-            "from_phase": before, "to_phase": after, **row,
-            "latent_heat_kJ_per_mol": row["delta_H_eV_per_atom"] * EV_TO_KJ_MOL,
-            "delta_S_J_per_mol_K": row["delta_S_kB_per_atom"] * R_J_MOL_K,
+            "direction":
+            direction,
+            "process":
+            process,
+            "process_ja":
+            PROCESS_JA[process],
+            "from_phase":
+            before,
+            "to_phase":
+            after,
+            **row,
+            "latent_heat_kJ_per_mol":
+            row["delta_H_eV_per_atom"] * EV_TO_KJ_MOL,
+            "delta_S_J_per_mol_K":
+            row["delta_S_kB_per_atom"] * R_J_MOL_K,
         })
     return pd.DataFrame(rows, columns=_TRANSITION_COLUMNS) if rows else empty
 
@@ -386,8 +438,12 @@ def rs_phase_transitions(
     for name, (T, H) in zip(("forward", "backward"), passes):
         direction = "heating" if T[-1] >= T[0] else "cooling"
         table = detect_phase_transitions(
-            T, H, direction=direction, initial_phase=phase,
-            final_phase=initial_phase if name == "backward" else None, criteria=criteria)
+            T,
+            H,
+            direction=direction,
+            initial_phase=phase,
+            final_phase=initial_phase if name == "backward" else None,
+            criteria=criteria)
         table.insert(0, "pass", name)
         frames.append(table)
         if len(table):
@@ -398,9 +454,11 @@ def rs_phase_transitions(
     return pd.concat(frames, ignore_index=True)
 
 
-def rs_safe_limit(
-    transitions: pd.DataFrame, *, T0: float, T_end: float, margin: float = 0.03
-) -> float | None:
+def rs_safe_limit(transitions: pd.DataFrame,
+                  *,
+                  T0: float,
+                  T_end: float,
+                  margin: float = 0.03) -> float | None:
     """T0 から見て最初の相転移の手前の温度 (相転移を跨がない範囲の端)。
 
     往路で融解が起きると、復路は過冷却液体のまま降りてきて融点より下で凝固する。
@@ -413,12 +471,15 @@ def rs_safe_limit(
     """
     if transitions is None or len(transitions) == 0:
         return None
-    spurious = (transitions["process"] == "unknown") & (transitions["delta_H_eV_per_atom"] <= 0)
+    spurious = (transitions["process"]
+                == "unknown") & (transitions["delta_H_eV_per_atom"] <= 0)
     transitions = transitions[~spurious]
     if len(transitions) == 0:
         return None
-    edges = np.concatenate([transitions["T_onset_K"].to_numpy(dtype=float),
-                            transitions["T_end_K"].to_numpy(dtype=float)])
+    edges = np.concatenate([
+        transitions["T_onset_K"].to_numpy(dtype=float),
+        transitions["T_end_K"].to_numpy(dtype=float)
+    ])
     if T_end >= T0:
         edges = edges[edges > T0]
         return float(edges.min() * (1.0 - margin)) if edges.size else float(T0)
@@ -426,9 +487,10 @@ def rs_safe_limit(
     return float(edges.max() * (1.0 + margin)) if edges.size else float(T0)
 
 
-def rs_branch_difference(
-    ti_rs: pd.DataFrame, *, T0: float, n_bins: int = 200
-) -> pd.DataFrame:
+def rs_branch_difference(ti_rs: pd.DataFrame,
+                         *,
+                         T0: float,
+                         n_bins: int = 200) -> pd.DataFrame:
     """同じ lambda (= 同じ温度) での 復路 − 往路 のエンタルピー差 (温度で区間平均)。
 
     往路と復路が同じ相なら差は非平衡性による小さな値だけ。相が違えば潜熱程度の差になる。
@@ -441,8 +503,8 @@ def rs_branch_difference(
     binned = _bin_scan(T, {"dH": diff}, n_bins)
     frame = pd.DataFrame({"temperature": binned["T"], "dH": binned["dH"]})
     # T0 から近い順に並べる
-    return frame.iloc[np.argsort(np.abs(frame["temperature"].to_numpy() - T0))].reset_index(
-        drop=True)
+    return frame.iloc[np.argsort(np.abs(frame["temperature"].to_numpy() -
+                                        T0))].reset_index(drop=True)
 
 
 def rs_valid_range(
@@ -474,7 +536,8 @@ def rs_valid_range(
     difference = rs_branch_difference(ti_rs, T0=T0, n_bins=criteria.n_bins)
     T, dH = difference["temperature"].to_numpy(), difference["dH"].to_numpy()
     sigma = _noise(dH[np.argsort(T)]) if len(dH) > 5 else 0.0
-    threshold = np.maximum(criteria.min_entropy_kB * KB_EV * T, criteria.n_sigma * sigma)
+    threshold = np.maximum(criteria.min_entropy_kB * KB_EV * T,
+                           criteria.n_sigma * sigma)
     near = max(3, len(T) // 20)
     dH_T0 = float(np.mean(dH[:near]))
     returns = abs(dH_T0) <= float(np.mean(threshold[:near]))
@@ -487,29 +550,50 @@ def rs_valid_range(
         return min(values) if ascending else max(values)
 
     if returns:
-        limits = [rs_safe_limit(transitions, T0=T0, T_end=T_end, margin=margin)]
-        # T0 から見て、食い違いが 3 区間続いた最初の温度
-        bad = np.abs(dH) > threshold
-        run = np.convolve(bad.astype(int), np.ones(3, dtype=int), mode="valid") == 3
-        if run.any():
-            T_c = float(T[int(np.argmax(run))])
-            limits.append(T_c * (1.0 - margin) if ascending else T_c * (1.0 + margin))
+
+        # 往路で最初の転移が生じる手前の温度
+        forward = (transitions[transitions["pass"] == "forward"]
+                   if transitions is not None and len(transitions)
+                   and "pass" in transitions else transitions)
+
+        limits = [rs_safe_limit(
+            forward,
+            T0=T0,
+            T_end=T_end,
+            margin=margin,
+        )]
+        # 従来方式　T0 から見て、食い違いが 3 区間続いた最初の温度
+        # transitions
+        # limits = [rs_safe_limit(transitions, T0=T0, T_end=T_end, margin=margin)]
+        # bad = np.abs(dH) > threshold
+        # run = np.convolve(bad.astype(int), np.ones(3, dtype=int),
+        #                   mode="valid") == 3
+        # if run.any():
+        #     T_c = float(T[int(np.argmax(run))])
+        #     limits.append(T_c * (1.0 - margin) if ascending else T_c *
+        #                   (1.0 + margin))
+
         limit = nearest(limits)
-        reason = ("往路と復路は同じ相にいる" if limit is None
-                  else "往路・復路の最初の転移の手前まで (往復平均)")
+        reason = ("往路と復路は同じ相にいる"
+                  if limit is None else "往路・復路の最初の転移の手前まで (往復平均)")
         branch = "both"
     else:
         forward = (transitions[transitions["pass"] == "forward"]
-                   if transitions is not None and len(transitions) and "pass" in transitions
-                   else transitions)
+                   if transitions is not None and len(transitions)
+                   and "pass" in transitions else transitions)
         limit = rs_safe_limit(forward, T0=T0, T_end=T_end, margin=margin)
         branch = "forward"
         reason = ("復路が出発相に戻っていない (折り返し点付近で転移して戻らなかった)"
                   " ため往路のみを使う")
     if limit is not None and abs(limit - T0) < 1e-9:
         limit = float(T0)
-    return {"limit": limit, "branch": branch, "backward_returns": bool(returns),
-            "dH_at_T0": dH_T0, "reason": reason}
+    return {
+        "limit": limit,
+        "branch": branch,
+        "backward_returns": bool(returns),
+        "dH_at_T0": dH_T0,
+        "reason": reason
+    }
 
 
 def hysteresis_melting_estimate(T_heating: float, T_cooling: float) -> float:
@@ -521,7 +605,9 @@ def hysteresis_melting_estimate(T_heating: float, T_cooling: float) -> float:
     return float(T_heating + T_cooling - np.sqrt(T_heating * T_cooling))
 
 
-def format_transitions(transitions: pd.DataFrame, *, title: str = "相転移") -> str:
+def format_transitions(transitions: pd.DataFrame,
+                       *,
+                       title: str = "相転移") -> str:
     """転移の表を人が読むための Markdown にする。"""
     lines = [f"## {title}", ""]
     if transitions is None or len(transitions) == 0:
@@ -575,22 +661,40 @@ def plot_rs_phases(
     import matplotlib.pyplot as plt
 
     rows = 2 if curve is not None and len(curve) else 1
-    figure, axes = plt.subplots(rows, 1, figsize=(7.5, 3.8 * rows), sharex=True, squeeze=False)
+    figure, axes = plt.subplots(rows,
+                                1,
+                                figsize=(7.5, 3.8 * rows),
+                                sharex=True,
+                                squeeze=False)
     axis = axes[0, 0]
     colors = {"forward": "C3", "backward": "C0"}
     for name, (T, H) in zip(("forward", "backward"), _rs_passes(ti_rs, T0)):
         direction = "heating" if T[-1] >= T[0] else "cooling"
-        axis.plot(T, H, lw=0.6, alpha=0.8, color=colors[name],
+        axis.plot(T,
+                  H,
+                  lw=0.6,
+                  alpha=0.8,
+                  color=colors[name],
                   label=f"{name} ({'昇温' if direction == 'heating' else '降温'})")
-    for _, row in (transitions if transitions is not None else pd.DataFrame()).iterrows():
+    for _, row in (transitions
+                   if transitions is not None else pd.DataFrame()).iterrows():
         color = colors.get(row.get("pass", "forward"), "k")
         axis.axvspan(row["T_onset_K"], row["T_end_K"], color=color, alpha=0.12)
-        axis.annotate(
-            label(f"{row['process_ja']}\n{row['T_K']:.0f} K\nΔS={row['delta_S_kB_per_atom']:.2f} kB"),
-            xy=(row["T_K"], 1.0), xycoords=("data", "axes fraction"),
-            ha="center", va="top", fontsize=7, color=color)
+        axis.annotate(label(
+            f"{row['process_ja']}\n{row['T_K']:.0f} K\nΔS={row['delta_S_kB_per_atom']:.2f} kB"
+        ),
+                      xy=(row["T_K"], 1.0),
+                      xycoords=("data", "axes fraction"),
+                      ha="center",
+                      va="top",
+                      fontsize=7,
+                      color=color)
     if limit is not None:
-        axis.axvline(limit, color="k", ls="--", lw=0.9, label=f"safe limit {limit:.0f} K")
+        axis.axvline(limit,
+                     color="k",
+                     ls="--",
+                     lw=0.9,
+                     label=f"safe limit {limit:.0f} K")
     axis.set_ylabel("H = U + PV (eV/atom)")
     axis.grid(alpha=0.3)
     axis.legend(fontsize=8, loc="lower right")
@@ -600,8 +704,17 @@ def plot_rs_phases(
         T, G = ordered["temperature"].to_numpy(), ordered["G"].to_numpy()
         if limit is not None:
             inside = (T >= min(T0, limit)) & (T <= max(T0, limit))
-            ax_g.plot(T[~inside], G[~inside], ".", ms=1, color="0.7", label="beyond transition")
-            ax_g.plot(T[inside], G[inside], lw=1.6, color="C2", label="G(T) (valid)")
+            ax_g.plot(T[~inside],
+                      G[~inside],
+                      ".",
+                      ms=1,
+                      color="0.7",
+                      label="beyond transition")
+            ax_g.plot(T[inside],
+                      G[inside],
+                      lw=1.6,
+                      color="C2",
+                      label="G(T) (valid)")
         else:
             ax_g.plot(T, G, lw=1.6, color="C2", label="G(T)")
         ax_g.set_ylabel("G (eV/atom)")
@@ -621,7 +734,13 @@ def plot_rs_phases(
 # ================================================================ 温度を振った MD
 _FLUCTUATION_ENSEMBLES = {
     # 正しいカノニカル / NPT 分布を与える熱浴・圧浴 (Berendsen は揺らぎが正しくない)
-    "nvt_nhc", "nvt_bdp", "nvt_lan", "nvt_bao", "nvt_mttk", "npt_scr", "npt_mttk",
+    "nvt_nhc",
+    "nvt_bdp",
+    "nvt_lan",
+    "nvt_bao",
+    "nvt_mttk",
+    "npt_scr",
+    "npt_mttk",
 }
 _NPT = ("npt_ber", "npt_scr", "npt_mttk")
 _NVT = ("nvt_ber", "nvt_nhc", "nvt_bdp", "nvt_lan", "nvt_bao", "nvt_mttk")
@@ -657,7 +776,8 @@ class ThermodynamicScan:
         """昇温・降温ステージか、温度の異なる定温ステージが 2 つ以上あるか。"""
         if len(self.ramp):
             return True
-        return len(self.plateaus) > 0 and self.plateaus["T_target_K"].nunique() >= 2
+        return len(
+            self.plateaus) > 0 and self.plateaus["T_target_K"].nunique() >= 2
 
     def table(self) -> pd.DataFrame:
         """ramp と plateaus を 1 つの表にしたもの (列 ``source``)。"""
@@ -674,31 +794,41 @@ class ThermodynamicScan:
         lines += [f"- {note}" for note in self.notes]
         lines.append("")
         if len(self.plateaus):
-            lines += ["## 定温ステージ (揺らぎ)", "",
-                      "| T (K) | アンサンブル | H (eV/atom) | V (Å³/atom) | C 揺らぎ (kB/atom) "
-                      "| C 差分 (kB/atom) | α 揺らぎ (1/K) | κ_T (1/GPa) | B (GPa) |",
-                      "|---|---|---|---|---|---|---|---|---|"]
+            lines += [
+                "## 定温ステージ (揺らぎ)", "",
+                "| T (K) | アンサンブル | H (eV/atom) | V (Å³/atom) | C 揺らぎ (kB/atom) "
+                "| C 差分 (kB/atom) | α 揺らぎ (1/K) | κ_T (1/GPa) | B (GPa) |",
+                "|---|---|---|---|---|---|---|---|---|"
+            ]
             for _, r in self.plateaus.iterrows():
                 lines.append(
                     f"| {r['T_K']:.1f} | {r['ensemble']} | {r['H_eV_per_atom']:.5f} "
                     f"| {r['V_A3_per_atom']:.4f} | {_fmt(r.get('C_fluct_kB_per_atom'))} "
                     f"| {_fmt(r.get('C_fd_kB_per_atom'))} | {_fmt(r.get('alpha_fluct_per_K'), 'e')} "
-                    f"| {_fmt(r.get('kappa_T_per_GPa'), 'e')} | {_fmt(r.get('bulk_modulus_GPa'))} |")
+                    f"| {_fmt(r.get('kappa_T_per_GPa'), 'e')} | {_fmt(r.get('bulk_modulus_GPa'))} |"
+                )
             lines.append("")
         if len(self.ramp):
-            lines += ["## 昇温・降温ステージ (微分)", "",
-                      "| stage | T (K) | H (eV/atom) | V (Å³/atom) | C (kB/atom) | C (J/mol/K) "
-                      "| α (1/K) |", "|---|---|---|---|---|---|---|"]
+            lines += [
+                "## 昇温・降温ステージ (微分)", "",
+                "| stage | T (K) | H (eV/atom) | V (Å³/atom) | C (kB/atom) | C (J/mol/K) "
+                "| α (1/K) |", "|---|---|---|---|---|---|---|"
+            ]
             for _, r in self.ramp.iterrows():
                 lines.append(
                     f"| {r['stage']} | {r['T_K']:.1f} | {r['H_eV_per_atom']:.5f} "
                     f"| {r['V_A3_per_atom']:.4f} | {_fmt(r['C_kB_per_atom'])} "
-                    f"| {_fmt(r['C_J_per_mol_K'])} | {_fmt(r['alpha_per_K'], 'e')} |")
+                    f"| {_fmt(r['C_J_per_mol_K'])} | {_fmt(r['alpha_per_K'], 'e')} |"
+                )
             lines.append("")
-        lines.append(format_transitions(self.transitions, title="昇温・降温で検出した相転移"))
+        lines.append(
+            format_transitions(self.transitions, title="昇温・降温で検出した相転移"))
         return "\n".join(lines)
 
-    def write(self, directory: Path | str, *, prefix: str = "thermodynamics",
+    def write(self,
+              directory: Path | str,
+              *,
+              prefix: str = "thermodynamics",
               dpi: int = 150) -> dict[str, Path]:
         """``<prefix>.csv`` / ``<prefix>_transitions.csv`` / ``<prefix>.md`` / ``.png`` を書く。"""
         directory = Path(directory)
@@ -726,27 +856,80 @@ class ThermodynamicScan:
         if len(self.ramp):
             for stage, group in self.ramp.groupby("stage", sort=True):
                 tag = f"ramp {stage} ({group['ensemble'].iloc[0]})"
-                ax_h.plot(group["T_K"], group["H_eV_per_atom"], "-", lw=1.2, label=tag)
-                ax_v.plot(group["T_K"], group["V_A3_per_atom"], "-", lw=1.2, label=tag)
-                ax_c.plot(group["T_K"], group["C_kB_per_atom"], "-", lw=1.0, label=tag)
-                ax_a.plot(group["T_K"], group["alpha_per_K"], "-", lw=1.0, label=tag)
+                ax_h.plot(group["T_K"],
+                          group["H_eV_per_atom"],
+                          "-",
+                          lw=1.2,
+                          label=tag)
+                ax_v.plot(group["T_K"],
+                          group["V_A3_per_atom"],
+                          "-",
+                          lw=1.2,
+                          label=tag)
+                ax_c.plot(group["T_K"],
+                          group["C_kB_per_atom"],
+                          "-",
+                          lw=1.0,
+                          label=tag)
+                ax_a.plot(group["T_K"],
+                          group["alpha_per_K"],
+                          "-",
+                          lw=1.0,
+                          label=tag)
         if len(self.plateaus):
             p = self.plateaus.sort_values("T_K")
-            ax_h.plot(p["T_K"], p["H_eV_per_atom"], "ko", ms=5, mfc="white", label="plateaus")
-            ax_v.plot(p["T_K"], p["V_A3_per_atom"], "ko", ms=5, mfc="white", label="plateaus")
-            ax_c.plot(p["T_K"], p["C_fluct_kB_per_atom"], "ks", ms=5, mfc="white",
+            ax_h.plot(p["T_K"],
+                      p["H_eV_per_atom"],
+                      "ko",
+                      ms=5,
+                      mfc="white",
+                      label="plateaus")
+            ax_v.plot(p["T_K"],
+                      p["V_A3_per_atom"],
+                      "ko",
+                      ms=5,
+                      mfc="white",
+                      label="plateaus")
+            ax_c.plot(p["T_K"],
+                      p["C_fluct_kB_per_atom"],
+                      "ks",
+                      ms=5,
+                      mfc="white",
                       label="fluctuation")
-            ax_c.plot(p["T_K"], p["C_fd_kB_per_atom"], "k^", ms=5, label="finite difference")
-            ax_a.plot(p["T_K"], p["alpha_fluct_per_K"], "ks", ms=5, mfc="white",
+            ax_c.plot(p["T_K"],
+                      p["C_fd_kB_per_atom"],
+                      "k^",
+                      ms=5,
+                      label="finite difference")
+            ax_a.plot(p["T_K"],
+                      p["alpha_fluct_per_K"],
+                      "ks",
+                      ms=5,
+                      mfc="white",
                       label="fluctuation")
-            ax_a.plot(p["T_K"], p["alpha_fd_per_K"], "k^", ms=5, label="finite difference")
+            ax_a.plot(p["T_K"],
+                      p["alpha_fd_per_K"],
+                      "k^",
+                      ms=5,
+                      label="finite difference")
         for _, row in self.transitions.iterrows():
             for axis in axes.flat:
-                axis.axvspan(row["T_onset_K"], row["T_end_K"], color="C3", alpha=0.1)
+                axis.axvspan(row["T_onset_K"],
+                             row["T_end_K"],
+                             color="C3",
+                             alpha=0.1)
             ax_h.annotate(label(f"{row['process_ja']}\n{row['T_K']:.0f} K"),
-                          xy=(row["T_K"], 0.97), xycoords=("data", "axes fraction"),
-                          ha="center", va="top", fontsize=7, color="C3")
-        ax_c.axhline(3.0, color="0.6", ls=":", lw=0.8, label="Dulong-Petit 3 kB")
+                          xy=(row["T_K"], 0.97),
+                          xycoords=("data", "axes fraction"),
+                          ha="center",
+                          va="top",
+                          fontsize=7,
+                          color="C3")
+        ax_c.axhline(3.0,
+                     color="0.6",
+                     ls=":",
+                     lw=0.8,
+                     label="Dulong-Petit 3 kB")
         ax_h.set_ylabel("H = E + PV (eV/atom)")
         ax_v.set_ylabel("V (Å$^3$/atom)")
         ax_c.set_ylabel("C (kB/atom)")
@@ -758,7 +941,8 @@ class ThermodynamicScan:
         for axis in axes[1]:
             axis.set_xlabel("T (K)")
         # 転移のピークで C が発散して見えなくなるのを防ぐ
-        values = self.ramp["C_kB_per_atom"].to_numpy() if len(self.ramp) else np.array([])
+        values = self.ramp["C_kB_per_atom"].to_numpy() if len(
+            self.ramp) else np.array([])
         values = values[np.isfinite(values)]
         if values.size > 4:
             lo, hi = np.percentile(values, [5, 90])
@@ -836,15 +1020,20 @@ def thermodynamic_scan(
     for stage_id, group in frame.groupby("stage", sort=True):
         ensemble = str(group["ensemble"].iloc[0])
         target = group["target_temperature"].to_numpy(dtype=float)
-        if ensemble not in _NVT + _NPT or not np.isfinite(target).all() or len(group) < 3:
+        if ensemble not in _NVT + _NPT or not np.isfinite(target).all() or len(
+                group) < 3:
             continue
         npt = ensemble in _NPT
         E = group["total_energy_per_atom"].to_numpy()
-        P = float(group["pressure"].mean()) if npt else 0.0   # 外圧 ~ 平均圧力
+        P = float(group["pressure"].mean()) if npt else 0.0  # 外圧 ~ 平均圧力
         V = group["volume_per_atom"].to_numpy()
         H = E + P * V * GPA_A3_TO_EV
-        base = {"stage": int(stage_id), "ensemble": ensemble,
-                "C_kind": "C_P" if npt else "C_V", "pressure_GPa": P if npt else np.nan}
+        base = {
+            "stage": int(stage_id),
+            "ensemble": ensemble,
+            "C_kind": "C_P" if npt else "C_V",
+            "pressure_GPa": P if npt else np.nan
+        }
 
         if np.ptp(target) > 1.0:  # ------------------------------------ 昇温・降温
             direction = "heating" if target[-1] > target[0] else "cooling"
@@ -858,25 +1047,45 @@ def thermodynamic_scan(
                     continue
                 v_mean = float(V[sel].mean())
                 rows.append({
-                    **base, "source": "ramp", "direction": direction,
-                    "T_K": float(group["temperature"].to_numpy()[sel].mean()),
-                    "T_target_K": float(target[sel].mean()), "n_samples": int(sel.sum()),
-                    "E_eV_per_atom": float(E[sel].mean()),
-                    "U_eV_per_atom": float(group["potential_energy_per_atom"].to_numpy()[sel].mean()),
-                    "H_eV_per_atom": float(H[sel].mean()), "V_A3_per_atom": v_mean,
-                    "P_mean_GPa": float(group["pressure"].to_numpy()[sel].mean()),
+                    **base,
+                    "source":
+                    "ramp",
+                    "direction":
+                    direction,
+                    "T_K":
+                    float(group["temperature"].to_numpy()[sel].mean()),
+                    "T_target_K":
+                    float(target[sel].mean()),
+                    "n_samples":
+                    int(sel.sum()),
+                    "E_eV_per_atom":
+                    float(E[sel].mean()),
+                    "U_eV_per_atom":
+                    float(group["potential_energy_per_atom"].to_numpy()
+                          [sel].mean()),
+                    "H_eV_per_atom":
+                    float(H[sel].mean()),
+                    "V_A3_per_atom":
+                    v_mean,
+                    "P_mean_GPa":
+                    float(group["pressure"].to_numpy()[sel].mean()),
                 })
             if len(rows) >= 3:
                 table = pd.DataFrame(rows)
                 x = table["T_target_K"].to_numpy()
-                y = (table["H_eV_per_atom"] if npt else table["E_eV_per_atom"]).to_numpy()
+                y = (table["H_eV_per_atom"]
+                     if npt else table["E_eV_per_atom"]).to_numpy()
                 table["C_kB_per_atom"] = _local_slope(x, y) / KB_EV
-                table["alpha_per_K"] = (_local_slope(x, table["V_A3_per_atom"].to_numpy())
-                                        / table["V_A3_per_atom"].to_numpy()) if npt else np.nan
+                table["alpha_per_K"] = (
+                    _local_slope(x, table["V_A3_per_atom"].to_numpy()) /
+                    table["V_A3_per_atom"].to_numpy()) if npt else np.nan
                 ramp_rows += table.to_dict("records")
-            found = detect_phase_transitions(
-                target, H, volume=V if npt else None, direction=direction,
-                initial_phase=phase, criteria=criteria)
+            found = detect_phase_transitions(target,
+                                             H,
+                                             volume=V if npt else None,
+                                             direction=direction,
+                                             initial_phase=phase,
+                                             criteria=criteria)
             if len(found):
                 found.insert(0, "stage", int(stage_id))
                 transitions.append(found)
@@ -894,19 +1103,25 @@ def thermodynamic_scan(
         H_sys = E_sys + P * V_sys * GPA_A3_TO_EV
         fluct = (H_sys if npt else E_sys)
         row = {
-            **base, "source": "plateau", "direction": "constant",
-            "T_K": T, "T_target_K": float(target.mean()), "n_samples": len(cut),
+            **base,
+            "source": "plateau",
+            "direction": "constant",
+            "T_K": T,
+            "T_target_K": float(target.mean()),
+            "n_samples": len(cut),
             "E_eV_per_atom": float(E_sys.mean() / n_atoms),
             "U_eV_per_atom": float(cut["potential_energy_per_atom"].mean()),
             "H_eV_per_atom": float(H_sys.mean() / n_atoms),
             "V_A3_per_atom": float(V_sys.mean() / n_atoms),
             "P_mean_GPa": float(cut["pressure"].mean()),
             "fluctuation_valid": ensemble in _FLUCTUATION_ENSEMBLES,
-            "C_fluct_kB_per_atom": float(np.var(fluct, ddof=1) / kT**2 / n_atoms),
+            "C_fluct_kB_per_atom":
+            float(np.var(fluct, ddof=1) / kT**2 / n_atoms),
         }
         if npt and np.var(V_sys) > 0:
             v_mean = float(V_sys.mean())
-            kappa = float(np.var(V_sys, ddof=1) / (kT * v_mean)) / 160.21766208  # 1/GPa
+            kappa = float(np.var(V_sys, ddof=1) /
+                          (kT * v_mean)) / 160.21766208  # 1/GPa
             row["kappa_T_per_GPa"] = kappa
             row["bulk_modulus_GPa"] = 1.0 / kappa if kappa > 0 else np.nan
             row["alpha_fluct_per_K"] = float(
@@ -916,22 +1131,27 @@ def thermodynamic_scan(
     ramp = pd.DataFrame(ramp_rows)
     plateaus = pd.DataFrame(plateau_rows)
     if len(plateaus):
-        for column in ("kappa_T_per_GPa", "bulk_modulus_GPa", "alpha_fluct_per_K"):
+        for column in ("kappa_T_per_GPa", "bulk_modulus_GPa",
+                       "alpha_fluct_per_K"):
             if column not in plateaus:
                 plateaus[column] = np.nan
         plateaus["C_fd_kB_per_atom"] = np.nan
         plateaus["alpha_fd_per_K"] = np.nan
         # 同じ種類 (NVT / NPT) の定温ステージどうしで温度差分をとる
         for kind, group in plateaus.groupby("C_kind"):
-            group = group.groupby("T_target_K", as_index=False).mean(numeric_only=True)
+            group = group.groupby("T_target_K",
+                                  as_index=False).mean(numeric_only=True)
             if len(group) < 2:
                 continue
             x = group["T_K"].to_numpy()
-            y = group["H_eV_per_atom" if kind == "C_P" else "E_eV_per_atom"].to_numpy()
+            y = group["H_eV_per_atom" if kind ==
+                      "C_P" else "E_eV_per_atom"].to_numpy()
             slope = np.gradient(y, x) / KB_EV
-            dv = np.gradient(group["V_A3_per_atom"].to_numpy(), x) / group["V_A3_per_atom"].to_numpy()
+            dv = np.gradient(group["V_A3_per_atom"].to_numpy(),
+                             x) / group["V_A3_per_atom"].to_numpy()
             for t, c, a in zip(group["T_target_K"], slope, dv):
-                sel = (plateaus["C_kind"] == kind) & (plateaus["T_target_K"] == t)
+                sel = (plateaus["C_kind"] == kind) & (plateaus["T_target_K"]
+                                                      == t)
                 plateaus.loc[sel, "C_fd_kB_per_atom"] = c
                 if kind == "C_P":
                     plateaus.loc[sel, "alpha_fd_per_K"] = a
@@ -952,15 +1172,22 @@ def thermodynamic_scan(
                 if src in table:
                     table[dst] = table[src] * R_J_MOL_K
             if mass_amu_per_atom:
-                table["density_g_cm3"] = (mass_amu_per_atom * AMU_A3_TO_G_CM3
-                                          / table["V_A3_per_atom"])
+                table["density_g_cm3"] = (mass_amu_per_atom * AMU_A3_TO_G_CM3 /
+                                          table["V_A3_per_atom"])
                 for src in ("C_kB_per_atom", "C_fluct_kB_per_atom"):
                     if src in table:
-                        table[src.replace("kB_per_atom", "J_per_g_K")] = (
-                            table[src] * R_J_MOL_K / mass_amu_per_atom)
-    if not len(ramp) and (not len(plateaus) or plateaus["T_target_K"].nunique() < 2):
+                        table[src.replace("kB_per_atom",
+                                          "J_per_g_K")] = (table[src] *
+                                                           R_J_MOL_K /
+                                                           mass_amu_per_atom)
+    if not len(ramp) and (not len(plateaus)
+                          or plateaus["T_target_K"].nunique() < 2):
         notes.append("温度を振ったステージ (昇温・降温、または温度の異なる定温) がありません。")
-    all_transitions = (pd.concat(transitions, ignore_index=True) if transitions
-                       else pd.DataFrame(columns=["stage"] + _TRANSITION_COLUMNS))
-    return ThermodynamicScan(ramp=ramp, plateaus=plateaus, transitions=all_transitions,
-                             mass_amu_per_atom=mass_amu_per_atom, notes=notes)
+    all_transitions = (pd.concat(transitions, ignore_index=True)
+                       if transitions else pd.DataFrame(columns=["stage"] +
+                                                        _TRANSITION_COLUMNS))
+    return ThermodynamicScan(ramp=ramp,
+                             plateaus=plateaus,
+                             transitions=all_transitions,
+                             mass_amu_per_atom=mass_amu_per_atom,
+                             notes=notes)
